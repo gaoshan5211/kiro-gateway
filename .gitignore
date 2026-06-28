@@ -26,6 +26,8 @@ debug*.json
 # Project-specific
 _notes/
 requests/
+CLAUDE.md
+docs/architecture.svg
 
 # Testing
 .pytest_cache/

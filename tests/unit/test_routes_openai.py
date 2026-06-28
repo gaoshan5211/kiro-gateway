@@ -32,6 +32,16 @@ from kiro.config import PROXY_API_KEY, APP_VERSION
 
 class TestVerifyApiKey:
     """Tests for the verify_api_key authentication function."""
+
+    @pytest.fixture(autouse=True)
+    def enable_proxy_auth_for_tests(self, monkeypatch):
+        """
+        Keep authentication enabled unless a test explicitly disables it.
+
+        The developer's local .env may set PROXY_AUTH_DISABLED=true for manual
+        testing, but these unit tests verify the default secure behavior.
+        """
+        monkeypatch.setattr("kiro.routes_openai.PROXY_AUTH_DISABLED", False)
     
     @pytest.mark.asyncio
     async def test_valid_bearer_token_returns_true(self):
@@ -142,6 +152,25 @@ class TestVerifyApiKey:
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_allows_missing_or_invalid_header(self, monkeypatch):
+        """
+        What it does: Verifies disabled proxy auth bypasses Authorization validation.
+        Purpose: Allow trusted local deployments to work with clients that omit API keys.
+        """
+        print("Setup: Disabling proxy authentication...")
+        monkeypatch.setattr("kiro.routes_openai.PROXY_AUTH_DISABLED", True)
+
+        print("Action: Calling verify_api_key with missing, invalid, and arbitrary headers...")
+        missing_result = await verify_api_key(None)
+        invalid_result = await verify_api_key("Bearer wrong_key")
+        arbitrary_result = await verify_api_key("anything")
+
+        print("Comparing results: Expected all True...")
+        assert missing_result is True
+        assert invalid_result is True
+        assert arbitrary_result is True
 
 
 # =============================================================================

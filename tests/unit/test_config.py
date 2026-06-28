@@ -7,6 +7,7 @@ Verifies loading settings from environment variables.
 
 import pytest
 import os
+import json
 from unittest.mock import patch
 
 
@@ -514,6 +515,133 @@ class TestKiroCliDbFileConfig:
             assert str(path) == config_module.KIRO_CLI_DB_FILE
 
 
+class TestProfileArnConfig:
+    """Tests for PROFILE_ARN configuration."""
+
+    def test_profile_arn_environment_takes_priority(self, tmp_path, monkeypatch):
+        """
+        What it does: Verifies PROFILE_ARN overrides Kiro profile file fallback.
+        Purpose: Ensure explicit user configuration is never replaced by auto-detection.
+        """
+        print("Setup: Creating Kiro profile file and explicit PROFILE_ARN...")
+        profile_file = tmp_path / "profile.json"
+        profile_file.write_text(
+            json.dumps({"arn": "arn:aws:codewhisperer:us-east-1:111111111111:profile/file"}),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("PROFILE_ARN", "arn:aws:codewhisperer:us-east-1:222222222222:profile/env")
+        monkeypatch.setenv("KIRO_PROFILE_FILE", str(profile_file))
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+
+        reload(config_module)
+
+        print(f"Comparing PROFILE_ARN: Expected env value, Got '{config_module.PROFILE_ARN}'")
+        assert config_module.PROFILE_ARN == "arn:aws:codewhisperer:us-east-1:222222222222:profile/env"
+
+    def test_profile_arn_loads_from_kiro_profile_file(self, tmp_path, monkeypatch):
+        """
+        What it does: Verifies PROFILE_ARN falls back to Kiro profile.json.
+        Purpose: Ensure Kiro IDE users do not need to manually copy profileArn into .env.
+        """
+        print("Setup: Creating Kiro profile file fallback...")
+        profile_file = tmp_path / "profile.json"
+        expected_arn = "arn:aws:codewhisperer:us-east-1:333333333333:profile/file"
+        profile_file.write_text(json.dumps({"arn": expected_arn, "name": "test"}), encoding="utf-8")
+        monkeypatch.delenv("PROFILE_ARN", raising=False)
+        monkeypatch.setenv("KIRO_PROFILE_FILE", str(profile_file))
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+
+        reload(config_module)
+
+        print(f"Comparing PROFILE_ARN: Expected file ARN, Got '{config_module.PROFILE_ARN}'")
+        assert config_module.PROFILE_ARN == expected_arn
+        assert config_module.KIRO_PROFILE_FILE == str(profile_file)
+
+    def test_profile_arn_empty_when_no_source_exists(self, tmp_path, monkeypatch):
+        """
+        What it does: Verifies missing environment and missing profile file return empty string.
+        Purpose: Ensure fallback is non-fatal when Kiro IDE storage is unavailable.
+        """
+        print("Setup: Removing profile sources and redirecting home to a temporary folder...")
+        monkeypatch.delenv("PROFILE_ARN", raising=False)
+        monkeypatch.delenv("KIRO_PROFILE_FILE", raising=False)
+        monkeypatch.setattr("pathlib.Path.home", lambda: tmp_path)
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+
+        reload(config_module)
+
+        print(f"Comparing PROFILE_ARN: Expected empty string, Got '{config_module.PROFILE_ARN}'")
+        assert config_module.PROFILE_ARN == ""
+
+    def test_profile_arn_ignores_invalid_profile_json(self, tmp_path, monkeypatch):
+        """
+        What it does: Verifies invalid Kiro profile JSON does not crash config loading.
+        Purpose: Ensure corrupt IDE storage cannot prevent server startup.
+        """
+        print("Setup: Creating invalid Kiro profile file...")
+        profile_file = tmp_path / "profile.json"
+        profile_file.write_text("{not-json", encoding="utf-8")
+        monkeypatch.delenv("PROFILE_ARN", raising=False)
+        monkeypatch.setenv("KIRO_PROFILE_FILE", str(profile_file))
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+
+        reload(config_module)
+
+        print(f"Comparing PROFILE_ARN: Expected empty string, Got '{config_module.PROFILE_ARN}'")
+        assert config_module.PROFILE_ARN == ""
+
+
+class TestProxyAuthDisabledConfig:
+    """Tests for PROXY_AUTH_DISABLED configuration."""
+
+    def test_proxy_auth_disabled_default_false(self, monkeypatch):
+        """
+        What it does: Verifies PROXY_AUTH_DISABLED defaults to false.
+        Purpose: Ensure proxy authentication remains enabled by default.
+        """
+        print("Setup: Removing PROXY_AUTH_DISABLED from environment...")
+        monkeypatch.delenv("PROXY_AUTH_DISABLED", raising=False)
+
+        print("Action: Reloading config module...")
+        with patch("dotenv.load_dotenv", return_value=False):
+            from importlib import reload
+            import kiro.config as config_module
+
+            reload(config_module)
+
+        print(f"Comparing PROXY_AUTH_DISABLED: Expected False, Got {config_module.PROXY_AUTH_DISABLED}")
+        assert config_module.PROXY_AUTH_DISABLED is False
+
+    def test_proxy_auth_disabled_true_values(self, monkeypatch):
+        """
+        What it does: Verifies truthy values enable PROXY_AUTH_DISABLED.
+        Purpose: Support common boolean environment variable formats.
+        """
+        print("Setup: Setting PROXY_AUTH_DISABLED=true...")
+        monkeypatch.setenv("PROXY_AUTH_DISABLED", "true")
+
+        print("Action: Reloading config module...")
+        from importlib import reload
+        import kiro.config as config_module
+
+        reload(config_module)
+
+        print(f"Comparing PROXY_AUTH_DISABLED: Expected True, Got {config_module.PROXY_AUTH_DISABLED}")
+        assert config_module.PROXY_AUTH_DISABLED is True
+
+
 class TestFallbackModelsConfig:
     """Tests for FALLBACK_MODELS configuration."""
     
@@ -583,6 +711,20 @@ class TestFallbackModelsConfig:
         print("Verification: Contains at least one Claude model...")
         has_claude = any("claude" in mid.lower() for mid in model_ids)
         assert has_claude, "No Claude models in fallback list"
+
+    def test_fallback_models_include_opus_4_8(self):
+        """
+        What it does: Verifies claude-opus-4.8 is exposed by fallback models.
+        Purpose: Ensure /v1/models includes the current Opus model on runtime endpoints.
+        """
+        print("Setup: Importing FALLBACK_MODELS...")
+        from kiro.config import FALLBACK_MODELS
+
+        model_ids = [m["modelId"] for m in FALLBACK_MODELS]
+        print(f"Model IDs in fallback list: {model_ids}")
+
+        print("Verification: Contains claude-opus-4.8...")
+        assert "claude-opus-4.8" in model_ids
     
     def test_fallback_models_use_dot_format(self):
         """

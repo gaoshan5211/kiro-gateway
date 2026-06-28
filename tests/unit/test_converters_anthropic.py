@@ -1538,6 +1538,27 @@ class TestAnthropicToKiro:
         assert len(tools) == 1
         assert tools[0]["toolSpecification"]["name"] == "get_weather"
 
+    def test_resolves_model_alias(self):
+        """
+        What it does: Verifies aliases are resolved before sending to Kiro.
+        Purpose: Ensure models advertised as aliases by /v1/models work in requests.
+        """
+        print("Setup: Request with default alias model ID...")
+        request = AnthropicMessagesRequest(
+            model="auto-kiro",
+            messages=[AnthropicMessage(role="user", content="Hello!")],
+            max_tokens=1024,
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        print(f"Result: {result}")
+        model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        print(f"Comparing model_id: Expected 'auto', Got '{model_id}'")
+        assert model_id == "auto"
+
     def test_builds_history_for_multi_turn(self):
         """
         What it does: Verifies building of history for multi-turn conversation.

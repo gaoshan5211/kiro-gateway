@@ -28,6 +28,16 @@ from kiro.config import PROXY_API_KEY
 
 class TestVerifyAnthropicApiKey:
     """Tests for the verify_anthropic_api_key authentication function."""
+
+    @pytest.fixture(autouse=True)
+    def enable_proxy_auth_for_tests(self, monkeypatch):
+        """
+        Keep authentication enabled unless a test explicitly disables it.
+
+        The developer's local .env may set PROXY_AUTH_DISABLED=true for manual
+        testing, but these unit tests verify the default secure behavior.
+        """
+        monkeypatch.setattr("kiro.routes_anthropic.PROXY_AUTH_DISABLED", False)
     
     @pytest.mark.asyncio
     async def test_valid_x_api_key_returns_true(self):
@@ -134,6 +144,25 @@ class TestVerifyAnthropicApiKey:
         
         print(f"Checking: HTTPException with status 401...")
         assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_auth_disabled_allows_missing_or_invalid_headers(self, monkeypatch):
+        """
+        What it does: Verifies disabled proxy auth bypasses Anthropic header validation.
+        Purpose: Allow trusted local deployments to work with clients that omit API keys.
+        """
+        print("Setup: Disabling proxy authentication...")
+        monkeypatch.setattr("kiro.routes_anthropic.PROXY_AUTH_DISABLED", True)
+
+        print("Action: Calling verify_anthropic_api_key with missing, invalid, and arbitrary headers...")
+        missing_result = await verify_anthropic_api_key(x_api_key=None, authorization=None)
+        invalid_result = await verify_anthropic_api_key(x_api_key="wrong_key", authorization=None)
+        arbitrary_result = await verify_anthropic_api_key(x_api_key=None, authorization="anything")
+
+        print("Comparing results: Expected all True...")
+        assert missing_result is True
+        assert invalid_result is True
+        assert arbitrary_result is True
     
     @pytest.mark.asyncio
     async def test_error_response_format_is_anthropic_style(self):

@@ -24,6 +24,7 @@ Centralized storage for all settings, constants, and mappings.
 Loads environment variables and provides typed access to them.
 """
 
+import json
 import os
 import re
 from pathlib import Path
@@ -76,6 +77,63 @@ def _get_raw_env_value(var_name: str, env_file: str = ".env") -> Optional[str]:
     
     return None
 
+
+def _load_profile_arn_from_kiro_profile(profile_file: str) -> str:
+    """
+    Load the AWS CodeWhisperer profile ARN from Kiro IDE global storage.
+
+    Args:
+        profile_file: Path to Kiro's profile.json file
+
+    Returns:
+        Profile ARN if the file exists and contains a valid arn field, otherwise
+        an empty string.
+    """
+    if not profile_file:
+        return ""
+
+    profile_path = Path(profile_file).expanduser()
+    if not profile_path.exists():
+        return ""
+
+    try:
+        profile_data = json.loads(profile_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return ""
+
+    if not isinstance(profile_data, dict):
+        return ""
+
+    profile_arn = profile_data.get("arn", "")
+    if not isinstance(profile_arn, str):
+        return ""
+
+    return profile_arn.strip()
+
+
+def _resolve_profile_arn() -> str:
+    """
+    Resolve the profile ARN from explicit configuration or Kiro IDE storage.
+
+    Resolution order:
+    1. PROFILE_ARN environment variable
+    2. KIRO_PROFILE_FILE environment variable
+    3. Default Kiro IDE profile.json location under the user's home directory
+
+    Returns:
+        Resolved profile ARN, or an empty string when no source is available.
+    """
+    env_profile_arn = os.getenv("PROFILE_ARN", "").strip()
+    if env_profile_arn:
+        return env_profile_arn
+
+    raw_profile_file = (
+        _get_raw_env_value("KIRO_PROFILE_FILE")
+        or os.getenv("KIRO_PROFILE_FILE", "")
+        or str(DEFAULT_KIRO_PROFILE_FILE)
+    )
+    return _load_profile_arn_from_kiro_profile(raw_profile_file)
+
 # ==================================================================================================
 # Server Settings
 # ==================================================================================================
@@ -97,6 +155,11 @@ SERVER_PORT: int = int(os.getenv("SERVER_PORT", str(DEFAULT_SERVER_PORT)))
 
 # API key for proxy access (clients must pass it in Authorization header)
 PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "my-super-secret-password-123")
+
+# Disable proxy API key validation.
+# Intended for trusted local-only deployments where clients cannot easily send
+# custom Authorization headers. Keep disabled in shared or public environments.
+PROXY_AUTH_DISABLED: bool = os.getenv("PROXY_AUTH_DISABLED", "false").lower() in ("true", "1", "yes")
 
 # ==================================================================================================
 # VPN/Proxy Settings for Kiro API Access
@@ -127,8 +190,22 @@ VPN_PROXY_URL: str = os.getenv("VPN_PROXY_URL", "")
 # Refresh token for updating access token
 REFRESH_TOKEN: str = os.getenv("REFRESH_TOKEN", "")
 
+# Kiro IDE profile file used as a fallback source for profileArn.
+DEFAULT_KIRO_PROFILE_FILE: Path = (
+    Path.home()
+    / "Library"
+    / "Application Support"
+    / "Kiro"
+    / "User"
+    / "globalStorage"
+    / "kiro.kiroagent"
+    / "profile.json"
+)
+_raw_profile_file = _get_raw_env_value("KIRO_PROFILE_FILE") or os.getenv("KIRO_PROFILE_FILE", "")
+KIRO_PROFILE_FILE: str = str(Path(_raw_profile_file)) if _raw_profile_file else str(DEFAULT_KIRO_PROFILE_FILE)
+
 # Profile ARN for AWS CodeWhisperer
-PROFILE_ARN: str = os.getenv("PROFILE_ARN", "")
+PROFILE_ARN: str = _resolve_profile_arn()
 
 # AWS SSO/auth region (default us-east-1)
 # This region is used for OIDC token refresh endpoint: https://oidc.{region}.amazonaws.com/token
@@ -282,6 +359,7 @@ FALLBACK_MODELS: List[Dict[str, str]] = [
     {"modelId": "claude-opus-4.5"},
     {"modelId": "claude-opus-4.6"},
     {"modelId": "claude-opus-4.7"},
+    {"modelId": "claude-opus-4.8"},
     {"modelId": "deepseek-3.2"},
     {"modelId": "glm-5"},
     {"modelId": "minimax-m2.1"},
@@ -578,4 +656,3 @@ def get_kiro_api_host(region: str) -> str:
 def get_kiro_q_host(region: str) -> str:
     """Return Q API host for the specified region."""
     return KIRO_Q_HOST_TEMPLATE.format(region=region)
-

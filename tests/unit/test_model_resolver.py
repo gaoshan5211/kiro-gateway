@@ -578,6 +578,24 @@ class TestGetModelIdForKiro:
         
         print(f"Comparing result: Expected 'claude-haiku-4.5', Got '{result}'")
         assert result == "claude-haiku-4.5"
+
+    def test_resolves_alias_before_normalization(self):
+        """
+        What it does: Resolves model aliases before normalization.
+        Goal: Ensure converter helper matches ModelResolver alias behavior.
+        """
+        aliases = {"auto-kiro": "auto", "fast-sonnet": "claude-sonnet-4-5"}
+
+        print("Action: get_model_id_for_kiro('auto-kiro', {}, aliases)...")
+        auto_result = get_model_id_for_kiro("auto-kiro", {}, aliases)
+
+        print("Action: get_model_id_for_kiro('fast-sonnet', {}, aliases)...")
+        sonnet_result = get_model_id_for_kiro("fast-sonnet", {}, aliases)
+
+        print(f"Comparing auto_result: Expected 'auto', Got '{auto_result}'")
+        assert auto_result == "auto"
+        print(f"Comparing sonnet_result: Expected 'claude-sonnet-4.5', Got '{sonnet_result}'")
+        assert sonnet_result == "claude-sonnet-4.5"
     
     def test_returns_internal_id_for_hidden_model(self):
         """

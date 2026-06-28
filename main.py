@@ -368,7 +368,7 @@ async def lifespan(app: FastAPI):
     # Helper function to add optional per-account overrides from .env
     def _add_env_overrides(entry: dict) -> None:
         """Add optional per-account overrides from .env (only if set)"""
-        profile_arn = os.getenv("PROFILE_ARN")
+        profile_arn = os.getenv("PROFILE_ARN") or PROFILE_ARN
         if profile_arn:
             entry["profile_arn"] = profile_arn
         

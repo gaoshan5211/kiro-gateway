@@ -156,10 +156,19 @@ REFRESH_TOKEN="your_kiro_refresh_token"
 # Password to protect YOUR proxy server (make up any secure string)
 PROXY_API_KEY="my-super-secret-password-123"
 
+# Optional: disable proxy API key validation for trusted local deployments
+PROXY_AUTH_DISABLED=false
+
 # Optional
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
+# Optional: override Kiro IDE profile.json auto-detection
+KIRO_PROFILE_FILE="~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/profile.json"
 KIRO_REGION="us-east-1"
 ```
+
+`PROFILE_ARN` is resolved in this order: explicit `PROFILE_ARN`, `KIRO_PROFILE_FILE`, then the default Kiro IDE profile file at `~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/profile.json`.
+
+Set `PROXY_AUTH_DISABLED=true` only for trusted local deployments. When enabled, the gateway accepts requests with missing, invalid, or arbitrary `Authorization` / `x-api-key` headers.
 
 ### Option 3: AWS SSO Credentials (kiro-cli / Enterprise)
 

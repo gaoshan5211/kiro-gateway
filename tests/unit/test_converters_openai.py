@@ -816,6 +816,25 @@ class TestBuildKiroPayload:
         # claude-sonnet-4-5 should normalize to claude-sonnet-4.5 (dashes→dots)
         print(f"Comparing model_id: Expected 'claude-sonnet-4.5', Got '{model_id}'")
         assert model_id == "claude-sonnet-4.5"
+
+    def test_resolves_model_alias(self):
+        """
+        What it does: Verifies aliases are resolved before sending to Kiro.
+        Purpose: Ensure models advertised as aliases by /v1/models work in requests.
+        """
+        print("Setup: Request with default alias model ID...")
+        request = ChatCompletionRequest(
+            model="auto-kiro",
+            messages=[ChatMessage(role="user", content="Hello")]
+        )
+
+        print("Action: Building payload...")
+        result = build_kiro_payload(request, "conv-123", "")
+
+        print(f"Result: {result}")
+        model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        print(f"Comparing model_id: Expected 'auto', Got '{model_id}'")
+        assert model_id == "auto"
     
     def test_includes_tools_in_context(self):
         """

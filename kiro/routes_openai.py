@@ -36,6 +36,7 @@ from loguru import logger
 
 from kiro.config import (
     PROXY_API_KEY,
+    PROXY_AUTH_DISABLED,
     APP_VERSION,
     PROFILE_ARN,
 )
@@ -80,6 +81,10 @@ async def verify_api_key(auth_header: str = Security(api_key_header)) -> bool:
     Raises:
         HTTPException: 401 if key is invalid or missing
     """
+    if PROXY_AUTH_DISABLED:
+        logger.debug("Proxy API key validation is disabled; allowing OpenAI request.")
+        return True
+
     if not auth_header or auth_header != f"Bearer {PROXY_API_KEY}":
         logger.warning("Access attempt with invalid API key.")
         raise HTTPException(status_code=401, detail="Invalid or missing API Key")
