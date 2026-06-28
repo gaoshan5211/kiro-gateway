@@ -2,133 +2,136 @@
 
 # 👻 Kiro Gateway
 
-**Proxy gateway for Kiro API (Amazon Q Developer / AWS CodeWhisperer)**
+**Kiro API (Amazon Q Developer / AWS CodeWhisperer) 代理网关**
 
-🇬🇧 English • [🇷🇺 Русский](docs/ru/README.md) • [🇨🇳 中文](docs/zh/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
+🇨🇳 中文 • [🇷🇺 Русский](docs/ru/README.md) • [🇪🇸 Español](docs/es/README.md) • [🇮🇩 Indonesia](docs/id/README.md) • [🇧🇷 Português](docs/pt/README.md) • [🇯🇵 日本語](docs/ja/README.md) • [🇰🇷 한국어](docs/ko/README.md)
 
-Made with ❤️ by [@Jwadow](https://github.com/jwadow)
+由 [@Jwadow](https://github.com/jwadow) 用 ❤️ 制作
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
-[![Sponsor](https://img.shields.io/badge/💖_Sponsor-Support_Development-ff69b4)](#-support-the-project)
+[![Sponsor](https://img.shields.io/badge/💖_Sponsor-支持开发-ff69b4)](#-支持项目)
 
-*Use Claude models from Kiro with Claude Code, OpenCode, OpenClaw, Claw Code, Codex app, Cursor, Cline, Roo Code, Kilo Code, Obsidian, OpenAI SDK, LangChain, Continue and other OpenAI or Anthropic compatible tools*
+*通过 Claude Code、OpenCode、OpenClaw、Claw Code、Codex app、Cursor、Cline、Roo Code、Kilo Code、Obsidian、OpenAI SDK、LangChain、Continue 和其他兼容 OpenAI 或 Anthropic 的工具使用 Kiro 的 Claude 模型*
 
-[Models](#-supported-models) • [Features](#-features) • [Quick Start](#-quick-start) • [Configuration](#%EF%B8%8F-configuration) • [💖 Sponsor](#-support-the-project)
+[模型](#-支持的模型) • [功能](#-功能特性) • [快速开始](#-快速开始) • [配置](#%EF%B8%8F-配置) • [部署](#-部署指南) • [注意事项](#%EF%B8%8F-部署与安全注意事项)
 
 </div>
 
 ---
 
-## 🤖 Available Models (Free List)
+## 🤖 可用模型（免费列表）
 
-> ⚠️ **Important:** Model availability depends on your Kiro tier (free/paid). The gateway provides access to whatever models are available in your IDE or CLI based on your subscription. The list below shows models commonly available on the **free tier**.
+> ⚠️ **重要：** 模型可用性取决于您的 Kiro 套餐（免费/付费）。网关提供对您的 IDE 或 CLI 中基于订阅可用的模型的访问。下面的列表显示**免费套餐**上通常可用的模型。
 
-> 🔒 **Claude Opus 4.5** was removed from the free tier on January 17, 2026. It may be available on paid tiers — check your IDE/CLI model list.
+> 🔒 **Claude Opus 4.5** 已于 2026 年 1 月 17 日从免费套餐中移除。它可能在付费套餐上可用 — 请检查您的 IDE/CLI 模型列表。
 
-🚀 **Claude Sonnet 4.5** — Balanced performance. Great for coding, writing, and general-purpose tasks.
+🚀 **Claude Sonnet 4.5** — 性能均衡。非常适合编程、写作和通用任务。
 
-⚡ **Claude Haiku 4.5** — Lightning fast. Perfect for quick responses, simple tasks, and chat.
+⚡ **Claude Haiku 4.5** — 闪电般快速。非常适合快速响应、简单任务和聊天。
 
-📦 **Claude Sonnet 4** — Previous generation. Still powerful and reliable for most use cases.
+📦 **Claude Sonnet 4** — 上一代模型。对于大多数用例仍然强大可靠。
 
-💤 **GLM-5** — Open MoE model (744B params, 40B active). Advanced model for complex systems engineering and long-horizon agentic tasks.
+💤 **GLM-5** — 开源MoE模型（744B参数，40B活跃）。用于复杂系统工程和长期代理任务的先进模型。
 
-🐋 **DeepSeek-V3.2** — Open MoE model (685B params, 37B active). Balanced performance for coding, reasoning, and general tasks.
+🐋 **DeepSeek-V3.2** — 开源MoE模型（685B参数，37B活跃）。编程、推理和通用任务的均衡性能。
 
-🧩 **MiniMax M2.5** — Open MoE model (230B params, 10B active). Enhanced version with improved reasoning and task handling.
+🧩 **MiniMax M2.5** — 开源MoE模型（230B参数，10B活跃）。增强版本，具有改进的推理和任务处理能力。
 
-🧩 **MiniMax M2.1** — Open MoE model (230B params, 10B active). Great for complex tasks, planning, and multi-step workflows.
+🧩 **MiniMax M2.1** — 开源MoE模型（230B参数，10B活跃）。适合复杂任务、规划和多步工作流。
 
-🤖 **Qwen3-Coder-Next** — Open MoE model (80B params, 3B active). Coding-focused. Excellent for development and large projects.
+🤖 **Qwen3-Coder-Next** — 开源MoE模型（80B参数，3B活跃）。专注于编程。适合开发和大型项目。
 
-> 💡 **Smart Model Resolution:** Use any model name format — `claude-sonnet-4-5`, `claude-sonnet-4.5`, or even versioned names like `claude-sonnet-4-5-20250929`. The gateway normalizes them automatically.
-
----
-
-## ✨ Features
-
-| Feature | Description |
-|---------|-------------|
-| 🔌 **OpenAI-compatible API** | Works with any OpenAI-compatible tool |
-| 🔌 **Anthropic-compatible API** | Native `/v1/messages` endpoint |
-| 🔀 **Multi-Account Support** | Intelligent failover between multiple accounts |
-| 🌐 **VPN/Proxy Support** | HTTP/SOCKS5 proxy for restricted networks |
-| 🧠 **Extended Thinking** | Reasoning is exclusive to our project |
-| 👁️ **Vision Support** | Send images to model |
-| 🔍 **Web Search** | Search the web for current information |
-| 🛠️ **Tool Calling** | Supports function calling |
-| 💬 **Full message history** | Passes complete conversation context |
-| 📡 **Streaming** | Full SSE streaming support |
-| 🔄 **Retry Logic** | Automatic retries on errors (403, 429, 5xx) |
-| 📋 **Extended model list** | Including versioned models |
-| 🔐 **Smart token management** | Automatic refresh before expiration |
+> 💡 **智能模型解析：** 使用任何模型名称格式 — `claude-sonnet-4-5`、`claude-sonnet-4.5`，甚至版本化名称如 `claude-sonnet-4-5-20250929`。网关会自动标准化它们。
 
 ---
 
-## 🚀 Quick Start
+## ✨ 功能特性
 
-**Choose your deployment method:**
-- 🐍 **Native Python** - Full control, easy debugging
-- 🐳 **Docker** - Isolated environment, easy deployment → [jump to Docker](#-docker-deployment)
+| 功能 | 描述 |
+|------|------|
+| 🔌 **兼容 OpenAI 的 API** | 与任何兼容 OpenAI 的工具配合使用 |
+| 🔌 **兼容 Anthropic 的 API** | 原生 `/v1/messages` 端点 |
+| 🔀 **多账户支持** | 多个账户之间的智能故障转移 |
+| 🌐 **VPN/代理支持** | 用于受限网络的 HTTP/SOCKS5 代理 |
+| 🧠 **扩展思维** | 推理功能是我们项目的独家特性 |
+| 👁️ **视觉支持** | 向模型发送图像 |
+| 🔍 **网络搜索** | 搜索互联网上的最新信息 |
+| 🛠️ **工具调用** | 支持函数调用 |
+| 💬 **完整消息历史** | 传递完整的对话上下文 |
+| 📡 **流式传输** | 完整的 SSE 流式传输支持 |
+| 🔄 **重试逻辑** | 错误时自动重试（403、429、5xx） |
+| 📋 **扩展模型列表** | 包括版本化模型 |
+| 🔐 **智能令牌管理** | 到期前自动刷新 |
+| 🧩 **模型别名** | 默认支持 `auto-kiro` → `auto`，避免客户端模型名冲突 |
+| 🧾 **Kiro Profile 自动读取** | 可从 Kiro IDE 的 `profile.json` 自动解析 `PROFILE_ARN` |
+| 🔓 **本地鉴权开关** | `PROXY_AUTH_DISABLED=true` 可在可信本地环境跳过代理 API key 校验 |
 
-### Prerequisites
+---
+
+## 🚀 快速开始
+
+**选择您的部署方法：**
+- 🐍 **原生 Python** - 完全控制，轻松调试
+- 🐳 **Docker** - 隔离环境，轻松部署 → [跳转到 Docker](#-docker-部署)
+
+### 前置要求
 
 - Python 3.10+
-- One of the following:
-  - [Kiro IDE](https://kiro.dev/) with logged in account, OR
-  - [Kiro CLI](https://kiro.dev/cli/) with AWS SSO (AWS IAM Identity Center, OIDC) - free Builder ID or corporate account
+- 以下之一：
+  - 已登录账户的 [Kiro IDE](https://kiro.dev/)，或
+  - 带有 AWS SSO (AWS IAM Identity Center, OIDC) 的 [Kiro CLI](https://kiro.dev/cli/) - 免费 Builder ID 或企业账户
 
-### Installation
+### 安装
 
 ```bash
-# Clone the repository (requires Git)
-git clone https://github.com/Jwadow/kiro-gateway.git
+# 克隆仓库（需要 Git）
+git clone https://github.com/gaoshan5211/kiro-gateway.git
 cd kiro-gateway
 
-# Or download ZIP: Code → Download ZIP → extract → open kiro-gateway folder
+# 或下载 ZIP：Code → Download ZIP → 解压 → 打开 kiro-gateway 文件夹
 
-# Install dependencies
+# 安装依赖
 pip install -r requirements.txt
 
-# Configure (see Configuration section)
+# 配置（参见配置部分）
 cp .env.example .env
-# Copy and edit .env with your credentials
+# 复制并编辑 .env 文件，填入您的凭据
 
-# Start the server
+# 启动服务器
 python main.py
 
-# Or with custom port (if 8000 is busy)
+# 或使用自定义端口（如果 8000 被占用）
 python main.py --port 9000
 ```
 
-The server will be available at `http://localhost:8000`
+服务器将在 `http://localhost:8000` 上可用
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ 配置
 
-> 💡 **Advanced users:** Looking for multi-account support? See [Account System](#-account-system-advanced) below.
+> 💡 **高级用户：** 寻找多账户支持？请参阅下面的 [账户系统](#-账户系统高级)。
 
-### Option 1: JSON Credentials File (Kiro IDE / Enterprise)
+### 选项 1：JSON 凭据文件 (Kiro IDE / Enterprise)
 
-Specify the path to the credentials file:
+指定凭据文件的路径：
 
-Works with:
-- **Kiro IDE** (standard) - for personal accounts
-- **Enterprise** - for corporate accounts with SSO
+适用于：
+- **Kiro IDE**（标准）- 用于个人账户
+- **Enterprise** - 用于带有 SSO 的企业账户
 
 ```env
 KIRO_CREDS_FILE="~/.aws/sso/cache/kiro-auth-token.json"
 
-# Password to protect YOUR proxy server (make up any secure string)
-# You'll use this as api_key when connecting to your gateway
+# 保护您的代理服务器的密码（设置任何安全字符串）
+# 连接到您的网关时，您将使用它作为 api_key
 PROXY_API_KEY="my-super-secret-password-123"
 ```
 
 <details>
-<summary>📄 JSON file format</summary>
+<summary>📄 JSON 文件格式</summary>
 
 ```json
 {
@@ -141,55 +144,70 @@ PROXY_API_KEY="my-super-secret-password-123"
 }
 ```
 
-> **Note:** If you have two JSON files in `~/.aws/sso/cache/` (e.g., `kiro-auth-token.json` and a file with a hash name), use `kiro-auth-token.json` in `KIRO_CREDS_FILE`. The gateway will automatically load the other file.
+> **注意：** 如果您在 `~/.aws/sso/cache/` 中有两个 JSON 文件（例如 `kiro-auth-token.json` 和一个带有哈希名称的文件），请在 `KIRO_CREDS_FILE` 中使用 `kiro-auth-token.json`。网关将自动加载另一个文件。
 
 </details>
 
-### Option 2: Environment Variables (.env file)
+### 选项 2：环境变量（.env 文件）
 
-Create a `.env` file in the project root:
+在项目根目录创建 `.env` 文件：
 
 ```env
-# Required
-REFRESH_TOKEN="your_kiro_refresh_token"
+# 必需
+REFRESH_TOKEN="您的_kiro_refresh_token"
 
-# Password to protect YOUR proxy server (make up any secure string)
+# 保护您的代理服务器的密码（设置任何安全字符串）
 PROXY_API_KEY="my-super-secret-password-123"
 
-# Optional: disable proxy API key validation for trusted local deployments
+# 可选：仅可信本地部署可关闭代理鉴权
 PROXY_AUTH_DISABLED=false
 
-# Optional
+# 可选
 PROFILE_ARN="arn:aws:codewhisperer:us-east-1:..."
-# Optional: override Kiro IDE profile.json auto-detection
+# 可选：覆盖 Kiro IDE profile.json 自动检测路径
 KIRO_PROFILE_FILE="~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/profile.json"
 KIRO_REGION="us-east-1"
 ```
 
-`PROFILE_ARN` is resolved in this order: explicit `PROFILE_ARN`, `KIRO_PROFILE_FILE`, then the default Kiro IDE profile file at `~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/profile.json`.
+`PROFILE_ARN` 的解析顺序：
+1. 显式设置的 `PROFILE_ARN`
+2. `KIRO_PROFILE_FILE` 指向的 `profile.json`
+3. 默认 Kiro IDE profile 文件：`~/Library/Application Support/Kiro/User/globalStorage/kiro.kiroagent/profile.json`
 
-Set `PROXY_AUTH_DISABLED=true` only for trusted local deployments. When enabled, the gateway accepts requests with missing, invalid, or arbitrary `Authorization` / `x-api-key` headers.
+仅在可信的本机或内网部署中设置 `PROXY_AUTH_DISABLED=true`。开启后，网关会接受缺失、错误或任意的 `Authorization` / `x-api-key` 请求头；不要在公网或共享服务器上开启。
 
-### Option 3: AWS SSO Credentials (kiro-cli / Enterprise)
+### 模型别名
 
-If you use `kiro-cli` or Kiro IDE with AWS SSO (AWS IAM Identity Center), the gateway will automatically detect and use the appropriate authentication.
+默认配置包含：
 
-Works with both free Builder ID accounts and corporate accounts.
+```python
+MODEL_ALIASES = {
+    "auto-kiro": "auto",
+}
+```
+
+客户端可以请求 `auto-kiro`，网关会在发送到 Kiro API 前转换为 `auto`。这样可以避开 Cursor 等客户端内置的 `auto` 模型名冲突。`/v1/models` 默认展示 `auto-kiro`，并隐藏原始 `auto`。
+
+### 选项 3：AWS SSO 凭据 (kiro-cli / Enterprise)
+
+如果您使用带有 AWS SSO (AWS IAM Identity Center) 的 `kiro-cli` 或 Kiro IDE，网关将自动检测并使用相应的认证。
+
+适用于免费 Builder ID 账户和企业账户。
 
 ```env
 KIRO_CREDS_FILE="~/.aws/sso/cache/your-sso-cache-file.json"
 
-# Password to protect YOUR proxy server
+# 保护您的代理服务器的密码
 PROXY_API_KEY="my-super-secret-password-123"
 
-# Note: PROFILE_ARN is NOT needed for AWS SSO (Builder ID and corporate accounts)
-# The gateway will work without it
+# 注意：AWS SSO (Builder ID 和企业账户) 用户不需要 PROFILE_ARN
+# 网关无需它即可工作
 ```
 
 <details>
-<summary>📄 AWS SSO JSON file format</summary>
+<summary>📄 AWS SSO JSON 文件格式</summary>
 
-AWS SSO credentials files (from `~/.aws/sso/cache/`) contain:
+AWS SSO 凭据文件（来自 `~/.aws/sso/cache/`）包含：
 
 ```json
 {
@@ -202,102 +220,102 @@ AWS SSO credentials files (from `~/.aws/sso/cache/`) contain:
 }
 ```
 
-**Note:** AWS SSO (Builder ID and corporate accounts) users do NOT need `profileArn`. The gateway will work without it (if specified, it will be ignored).
+**注意：** AWS SSO (Builder ID 和企业账户) 用户不需要 `profileArn`。网关无需它即可工作（如果指定，将被忽略）。
 
 </details>
 
 <details>
-<summary>🔍 How it works</summary>
+<summary>🔍 工作原理</summary>
 
-The gateway automatically detects the authentication type based on the credentials file:
+网关根据凭据文件自动检测认证类型：
 
-- **Kiro Desktop Auth** (default): Used when `clientId` and `clientSecret` are NOT present
-  - Endpoint: `https://prod.{region}.auth.desktop.kiro.dev/refreshToken`
+- **Kiro Desktop Auth**（默认）：当 `clientId` 和 `clientSecret` 不存在时使用
+  - 端点：`https://prod.{region}.auth.desktop.kiro.dev/refreshToken`
   
-- **AWS SSO (OIDC)**: Used when `clientId` and `clientSecret` ARE present
-  - Endpoint: `https://oidc.{region}.amazonaws.com/token`
+- **AWS SSO (OIDC)**：当 `clientId` 和 `clientSecret` 存在时使用
+  - 端点：`https://oidc.{region}.amazonaws.com/token`
 
-No additional configuration is needed — just point to your credentials file!
+无需额外配置 — 只需指向您的凭据文件！
 
 </details>
 
-### Option 4: kiro-cli SQLite Database
+### 选项 4：kiro-cli SQLite 数据库
 
-If you use `kiro-cli` and prefer to use its SQLite database directly:
+如果您使用 `kiro-cli` 并希望直接使用其 SQLite 数据库：
 
 ```env
 KIRO_CLI_DB_FILE="~/.local/share/kiro-cli/data.sqlite3"
 
-# Password to protect YOUR proxy server
+# 保护您的代理服务器的密码
 PROXY_API_KEY="my-super-secret-password-123"
 
-# Note: PROFILE_ARN is NOT needed for AWS SSO (Builder ID and corporate accounts)
-# The gateway will work without it
+# 注意：AWS SSO (Builder ID 和企业账户) 用户不需要 PROFILE_ARN
+# 网关无需它即可工作
 ```
 
 <details>
-<summary>📄 Database locations</summary>
+<summary>📄 数据库位置</summary>
 
-| CLI Tool | Database Path |
-|----------|---------------|
+| CLI 工具 | 数据库路径 |
+|----------|-----------|
 | kiro-cli | `~/.local/share/kiro-cli/data.sqlite3` |
 | amazon-q-developer-cli | `~/.local/share/amazon-q/data.sqlite3` |
 
-The gateway reads credentials from the `auth_kv` table which stores:
-- `kirocli:odic:token` or `codewhisperer:odic:token` — access token, refresh token, expiration
-- `kirocli:odic:device-registration` or `codewhisperer:odic:device-registration` — client ID and secret
+网关从 `auth_kv` 表读取凭据，该表存储：
+- `kirocli:odic:token` 或 `codewhisperer:odic:token` — 访问令牌、刷新令牌、过期时间
+- `kirocli:odic:device-registration` 或 `codewhisperer:odic:device-registration` — 客户端 ID 和密钥
 
-Both key formats are supported for compatibility with different kiro-cli versions.
+两种键格式都支持，以兼容不同版本的 kiro-cli。
 
 </details>
 
-### Getting Credentials
+### 获取凭据
 
-**For Kiro IDE users:**
-- Log in to Kiro IDE and use Option 1 above (JSON credentials file)
-- The credentials file is created automatically after login
+**Kiro IDE 用户：**
+- 登录 Kiro IDE 并使用上面的选项 1（JSON 凭据文件）
+- 凭据文件在登录后自动创建
 
-**For Kiro CLI users:**
-- Log in with `kiro-cli login` and use Option 3 or Option 4 above
-- No manual token extraction needed!
+**Kiro CLI 用户：**
+- 使用 `kiro-cli login` 登录并使用上面的选项 3 或选项 4
+- 无需手动提取令牌！
 
 <details>
-<summary>🔧 Advanced: Manual token extraction</summary>
+<summary>🔧 高级：手动提取令牌</summary>
 
-If you need to manually extract the refresh token (e.g., for debugging), you can intercept Kiro IDE traffic:
-- Look for requests to: `prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
+如果您需要手动提取 refresh token（例如用于调试），您可以拦截 Kiro IDE 流量：
+- 查找发往以下地址的请求：`prod.us-east-1.auth.desktop.kiro.dev/refreshToken`
 
 </details>
 
 ---
 
-## 🔀 Account System (Advanced)
+## 🔀 账户系统（高级）
 
-Account System is a way to manage multiple Kiro accounts with automatic failover. In the future, this system will replace `.env` file for credential configuration, but currently it's optional and intended for those who want to use multiple accounts.
+账户系统是一种管理多个 Kiro 账户并实现自动故障转移的方式。未来，该系统将取代 `.env` 文件用于凭据配置，但目前它是可选的，适用于想要使用多个账户的用户。
 
-### Why You Need This
+### 为什么需要
 
-If you have multiple Kiro accounts, the gateway can automatically switch between them when account is temporarily unavailable.
+如果您有多个 Kiro 账户，网关可以在一个账户暂时不可用时自动切换到另一个账户。
 
-The system works with a single account too — just without switching.
+该系统也适用于单个账户 — 只是没有切换功能。
 
-### How to Enable
+### 如何启用
 
-Add to your `.env`:
+在您的 `.env` 中添加：
 
 ```env
 ACCOUNT_SYSTEM=true
 ```
 
-**What happens:**
-- On first startup, your credentials from `.env` are automatically migrated to `credentials.json` (one-time)
-- After that, all account and region settings from `.env` are ignored
-- Account management only through `credentials.json`
+**会发生什么：**
+- 首次启动时，您的 `.env` 中的凭据会自动迁移到 `credentials.json`（仅一次）
+- 之后，`.env` 中的所有账户和区域设置都会被忽略
+- 账户管理仅通过 `credentials.json` 进行
 
 <details>
-<summary>📄 Configuration Examples</summary>
+<summary>📄 配置示例</summary>
 
-**Single account:**
+**单个账户：**
 ```json
 [
   {
@@ -307,7 +325,7 @@ ACCOUNT_SYSTEM=true
 ]
 ```
 
-**Multiple accounts:**
+**多个账户：**
 ```json
 [
   {
@@ -326,7 +344,7 @@ ACCOUNT_SYSTEM=true
 ]
 ```
 
-**Folder with files:**
+**包含文件的文件夹：**
 ```json
 [
   {
@@ -336,45 +354,118 @@ ACCOUNT_SYSTEM=true
 ]
 ```
 
-The gateway will scan all files in the folder and add them as separate accounts.
+网关将扫描文件夹中的所有文件并将其添加为单独的账户。
 
 </details>
 
-### How Failover Works
+### 故障转移如何工作
 
-When one account returns an error (429 rate limit, 402 quota exceeded), the gateway automatically tries the next account from the list. If an account fails several times in a row, the gateway temporarily stops using it and periodically checks if it has recovered.
+当一个账户返回错误（429 速率限制、402 配额超出）时，网关会自动尝试列表中的下一个账户。如果一个账户连续多次失败，网关会暂时停止使用它，并定期检查它是否已恢复。
 
-For a single account, failover doesn't work — you get the original error from Kiro API.
+对于单个账户，故障转移不起作用 — 您会收到来自 Kiro API 的原始错误。
 
-For complete configuration examples (including per-account region settings), see [`credentials.json.example`](credentials.json.example).
+完整的配置示例（包括每个账户的区域设置）请参见 [`credentials.json.example`](credentials.json.example)。
 
 ---
 
-## 🐳 Docker Deployment
+## 🚢 部署指南
 
-> **Docker-based deployment.** Prefer native Python? See [Quick Start](#-quick-start) above.
+### 本机源码部署
 
-### Quick Start
+适合开发、调试和本机长期运行：
 
 ```bash
-# 1. Clone and configure
-git clone https://github.com/Jwadow/kiro-gateway.git
+git clone https://github.com/gaoshan5211/kiro-gateway.git
+cd kiro-gateway
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+# 编辑 .env，至少配置一种 Kiro 凭据来源和 PROXY_API_KEY
+
+python main.py --host 127.0.0.1 --port 8000
+```
+
+检查：
+
+```bash
+curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/v1/models \
+  -H "Authorization: Bearer my-super-secret-password-123"
+```
+
+### Linux 服务器部署
+
+适合部署到远程 Linux 服务器，例如 AMD64 架构服务器。
+
+```bash
+git clone https://github.com/gaoshan5211/kiro-gateway.git
+cd kiro-gateway
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+cp .env.example .env
+vim .env
+
+python main.py --host 0.0.0.0 --port 8000
+```
+
+生产环境建议使用 systemd、Supervisor、Docker Compose 或反向代理守护进程，不建议只依赖前台 shell。公网暴露时必须保留 `PROXY_API_KEY` 校验，并通过 Nginx/Caddy 配置 HTTPS。
+
+### Apple Silicon 本机构建 Docker 后部署到 AMD64 服务器
+
+如果在 Apple Silicon Mac 上构建镜像并上传到 Linux AMD64 服务器，必须指定平台：
+
+```bash
+docker buildx build --platform linux/amd64 -t kiro-gateway:local .
+docker save kiro-gateway:local | gzip > kiro-gateway-linux-amd64.tar.gz
+```
+
+上传到服务器后：
+
+```bash
+gunzip -c kiro-gateway-linux-amd64.tar.gz | docker load
+docker run -d \
+  --name kiro-gateway \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  --env-file .env \
+  kiro-gateway:local
+```
+
+---
+
+## 🐳 Docker 部署
+
+> **基于 Docker 的部署。** 更喜欢原生 Python？请参阅上面的 [快速开始](#-快速开始)。
+
+> **注意：** `ghcr.io/jwadow/kiro-gateway:latest` 是上游预构建镜像，不一定包含本仓库的本地修改。要部署本仓库当前改动，请使用“从源代码构建”或“Apple Silicon 本机构建 Docker 后部署到 AMD64 服务器”中的命令。
+
+### 快速开始
+
+```bash
+# 1. 克隆并配置
+git clone https://github.com/gaoshan5211/kiro-gateway.git
 cd kiro-gateway
 cp .env.example .env
-# Edit .env with your credentials
+# 使用您的凭据编辑 .env
 
-# 2. Run with docker-compose
+# 2. 使用 docker-compose 运行
 docker-compose up -d
 
-# 3. Check status
+# 3. 检查状态
 docker-compose logs -f
 curl http://localhost:8000/health
 ```
 
-### Docker Run (Without Compose)
+### Docker Run（不使用 Compose）
 
 <details>
-<summary>🔹 Using Environment Variables</summary>
+<summary>🔹 使用环境变量</summary>
 
 ```bash
 docker run -d \
@@ -388,7 +479,7 @@ docker run -d \
 </details>
 
 <details>
-<summary>🔹 Using Credentials File</summary>
+<summary>🔹 使用凭据文件</summary>
 
 **Linux/macOS:**
 ```bash
@@ -415,7 +506,7 @@ docker run -d `
 </details>
 
 <details>
-<summary>🔹 Using .env File</summary>
+<summary>🔹 使用 .env 文件</summary>
 
 ```bash
 docker run -d -p 8000:8000 --env-file .env --name kiro-gateway ghcr.io/jwadow/kiro-gateway:latest
@@ -423,118 +514,136 @@ docker run -d -p 8000:8000 --env-file .env --name kiro-gateway ghcr.io/jwadow/ki
 
 </details>
 
-### Docker Compose Configuration
+### Docker Compose 配置
 
-Edit `docker-compose.yml` and uncomment volume mounts for your OS:
+编辑 `docker-compose.yml` 并为您的操作系统取消注释卷挂载：
 
 ```yaml
 volumes:
-  # Kiro IDE credentials (choose your OS)
+  # Kiro IDE 凭据（选择您的操作系统）
   - ~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro              # Linux/macOS
   # - ${USERPROFILE}/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro  # Windows
   
-  # kiro-cli database (choose your OS)
+  # kiro-cli 数据库（选择您的操作系统）
   - ~/.local/share/kiro-cli:/home/kiro/.local/share/kiro-cli  # Linux/macOS
   # - ${USERPROFILE}/.local/share/kiro-cli:/home/kiro/.local/share/kiro-cli  # Windows
   
-  # Debug logs (optional)
+  # 调试日志（可选）
   - ./debug_logs:/app/debug_logs
 ```
 
-### Management Commands
+### 管理命令
 
 ```bash
-docker-compose logs -f      # View logs
-docker-compose restart      # Restart
-docker-compose down         # Stop
-docker-compose pull && docker-compose up -d  # Update
+docker-compose logs -f      # 查看日志
+docker-compose restart      # 重启
+docker-compose down         # 停止
+docker-compose pull && docker-compose up -d  # 更新
 ```
 
 <details>
-<summary>🔧 Building from Source</summary>
+<summary>🔧 从源代码构建</summary>
 
 ```bash
 docker build -t kiro-gateway .
 docker run -d -p 8000:8000 --env-file .env kiro-gateway
 ```
 
+Apple Silicon Mac 构建给 Linux AMD64 服务器使用时：
+
+```bash
+docker buildx build --platform linux/amd64 -t kiro-gateway:local .
+```
+
 </details>
 
 ---
 
-## 🌐 VPN/Proxy Support
+## ⚠️ 部署与安全注意事项
 
-**For users in China, corporate networks, or regions with connectivity issues to AWS services.**
+- 不要提交或公开 `.env`、`credentials.json`、`state.json`、`debug_logs/`、`logs/`、Kiro/AWS 凭据文件或任何 token。
+- `PROXY_AUTH_DISABLED=true` 只适合可信本机环境。只要服务可能被局域网、服务器或公网访问，就应保持 `false`。
+- `PROXY_API_KEY` 是访问本代理的口令，不是 Kiro 或 AWS token。建议使用足够长的随机字符串。
+- `KIRO_PROFILE_FILE` 只用于辅助读取 Kiro IDE 的 `profile.json`，显式设置的 `PROFILE_ARN` 永远优先。
+- AWS SSO / Builder ID / 企业账户通常不需要手动配置 `PROFILE_ARN`。
+- Docker 使用凭据文件时建议只读挂载，例如 `~/.aws/sso/cache:/home/kiro/.aws/sso/cache:ro`。
+- 对外提供服务时应使用 HTTPS，并限制访问来源；不要把未加密的 `http://服务器:8000` 直接暴露给公网。
+- AGPL-3.0 要求网络部署修改版时向用户提供对应源码。
+- 如果 `/health` 正常但模型请求失败，请开启 `DEBUG_MODE=errors`，检查 `debug_logs/` 中实际发送给 Kiro 的模型名和上游错误。
 
-The gateway supports routing all Kiro API requests through a VPN or proxy server. This is essential if you experience connection problems to AWS endpoints or need to use a corporate proxy.
+## 🌐 VPN/代理支持
 
-### Configuration
+**适用于中国、企业网络或与 AWS 服务连接存在问题的地区的用户。**
 
-Add to your `.env` file:
+网关支持通过 VPN 或代理服务器路由所有 Kiro API 请求。如果您遇到与 AWS 端点的连接问题或需要使用企业代理，这是必需的。
+
+### 配置
+
+添加到您的 `.env` 文件：
 
 ```env
-# HTTP proxy
+# HTTP 代理
 VPN_PROXY_URL=http://127.0.0.1:7890
 
-# SOCKS5 proxy
+# SOCKS5 代理
 VPN_PROXY_URL=socks5://127.0.0.1:1080
 
-# With authentication (corporate proxies)
+# 带身份验证（企业代理）
 VPN_PROXY_URL=http://username:password@proxy.company.com:8080
 
-# Without protocol (defaults to http://)
+# 无协议（默认为 http://）
 VPN_PROXY_URL=192.168.1.100:8080
 ```
 
-### Supported Protocols
+### 支持的协议
 
-- ✅ **HTTP** — Standard proxy protocol
-- ✅ **HTTPS** — Secure proxy connections
-- ✅ **SOCKS5** — Advanced proxy protocol (common in VPN software)
-- ✅ **Authentication** — Username/password embedded in URL
+- ✅ **HTTP** — 标准代理协议
+- ✅ **HTTPS** — 安全代理连接
+- ✅ **SOCKS5** — 高级代理协议（VPN 软件中常见）
+- ✅ **身份验证** — URL 中嵌入的用户名/密码
 
-### When You Need This
+### 何时需要
 
-| Situation | Solution |
-|-----------|----------|
-| Connection timeouts to AWS | Use VPN/proxy to route traffic |
-| Corporate network restrictions | Configure your company's proxy |
-| Regional connectivity issues | Use a VPN service with proxy support |
-| Privacy requirements | Route through your own proxy server |
+| 情况 | 解决方案 |
+|------|---------|
+| 与 AWS 连接超时 | 使用 VPN/代理路由流量 |
+| 企业网络限制 | 配置您公司的代理 |
+| 区域连接问题 | 使用支持代理的 VPN 服务 |
+| 隐私要求 | 通过您自己的代理服务器路由 |
 
-### Popular VPN Software with Proxy Support
+### 支持代理的流行 VPN 软件
 
-Most VPN clients provide a local proxy server you can use:
-- **Sing-box** — Modern VPN client with HTTP/SOCKS5 proxy
-- **Clash** — Usually runs on `http://127.0.0.1:7890`
-- **V2Ray** — Configurable SOCKS5/HTTP proxy
-- **Shadowsocks** — SOCKS5 proxy support
-- **Corporate VPN** — Check your IT department for proxy settings
+大多数 VPN 客户端提供本地代理服务器：
+- **Sing-box** — 支持 HTTP/SOCKS5 代理的现代 VPN 客户端
+- **Clash** — 通常在 `http://127.0.0.1:7890` 上运行
+- **V2Ray** — 可配置的 SOCKS5/HTTP 代理
+- **Shadowsocks** — SOCKS5 代理支持
+- **企业 VPN** — 向您的 IT 部门咨询代理设置
 
-Leave `VPN_PROXY_URL` empty (default) if you don't need proxy support.
+如果您不需要代理支持，请将 `VPN_PROXY_URL` 留空（默认）。
 
 ---
 
-## 📡 API Reference
+## 📡 API 参考
 
-### Endpoints
+### 端点
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/` | GET | Health check |
-| `/health` | GET | Detailed health check |
-| `/v1/models` | GET | List available models |
+| 端点 | 方法 | 描述 |
+|------|------|------|
+| `/` | GET | 健康检查 |
+| `/health` | GET | 详细健康检查 |
+| `/v1/models` | GET | 列出可用模型 |
 | `/v1/chat/completions` | POST | OpenAI Chat Completions API |
 | `/v1/messages` | POST | Anthropic Messages API |
 
 ---
 
-## 💡 Usage Examples
+## 💡 使用示例
 
 ### OpenAI API
 
 <details>
-<summary>🔹 Simple cURL Request</summary>
+<summary>🔹 简单 cURL 请求</summary>
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -542,17 +651,17 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5",
-    "messages": [{"role": "user", "content": "Hello!"}],
+    "messages": [{"role": "user", "content": "你好！"}],
     "stream": true
   }'
 ```
 
-> **Note:** Replace `my-super-secret-password-123` with the `PROXY_API_KEY` you set in your `.env` file.
+> **注意：** 将 `my-super-secret-password-123` 替换为您在 `.env` 文件中设置的 `PROXY_API_KEY`。
 
 </details>
 
 <details>
-<summary>🔹 Streaming Request</summary>
+<summary>🔹 流式请求</summary>
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -561,8 +670,8 @@ curl http://localhost:8000/v1/chat/completions \
   -d '{
     "model": "claude-sonnet-4-5",
     "messages": [
-      {"role": "system", "content": "You are a helpful assistant."},
-      {"role": "user", "content": "What is 2+2?"}
+      {"role": "system", "content": "你是一个有帮助的助手。"},
+      {"role": "user", "content": "2+2 等于多少？"}
     ],
     "stream": true
   }'
@@ -571,7 +680,7 @@ curl http://localhost:8000/v1/chat/completions \
 </details>
 
 <details>
-<summary>🛠️ With Tool Calling</summary>
+<summary>🛠️ 带工具调用</summary>
 
 ```bash
 curl http://localhost:8000/v1/chat/completions \
@@ -579,16 +688,16 @@ curl http://localhost:8000/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "model": "claude-sonnet-4-5",
-    "messages": [{"role": "user", "content": "What is the weather in London?"}],
+    "messages": [{"role": "user", "content": "伦敦的天气怎么样？"}],
     "tools": [{
       "type": "function",
       "function": {
         "name": "get_weather",
-        "description": "Get weather for a location",
+        "description": "获取某个位置的天气",
         "parameters": {
           "type": "object",
           "properties": {
-            "location": {"type": "string", "description": "City name"}
+            "location": {"type": "string", "description": "城市名称"}
           },
           "required": ["location"]
         }
@@ -607,14 +716,14 @@ from openai import OpenAI
 
 client = OpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="my-super-secret-password-123"  # Your PROXY_API_KEY from .env
+    api_key="my-super-secret-password-123"  # 您在 .env 中的 PROXY_API_KEY
 )
 
 response = client.chat.completions.create(
     model="claude-sonnet-4-5",
     messages=[
-        {"role": "system", "content": "You are a helpful assistant."},
-        {"role": "user", "content": "Hello!"}
+        {"role": "system", "content": "你是一个有帮助的助手。"},
+        {"role": "user", "content": "你好！"}
     ],
     stream=True
 )
@@ -634,11 +743,11 @@ from langchain_openai import ChatOpenAI
 
 llm = ChatOpenAI(
     base_url="http://localhost:8000/v1",
-    api_key="my-super-secret-password-123",  # Your PROXY_API_KEY from .env
+    api_key="my-super-secret-password-123",  # 您在 .env 中的 PROXY_API_KEY
     model="claude-sonnet-4-5"
 )
 
-response = llm.invoke("Hello, how are you?")
+response = llm.invoke("你好，你好吗？")
 print(response.content)
 ```
 
@@ -647,7 +756,7 @@ print(response.content)
 ### Anthropic API
 
 <details>
-<summary>🔹 Simple cURL Request</summary>
+<summary>🔹 简单 cURL 请求</summary>
 
 ```bash
 curl http://localhost:8000/v1/messages \
@@ -657,16 +766,16 @@ curl http://localhost:8000/v1/messages \
   -d '{
     "model": "claude-sonnet-4-5",
     "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "messages": [{"role": "user", "content": "你好！"}]
   }'
 ```
 
-> **Note:** Anthropic API uses `x-api-key` header instead of `Authorization: Bearer`. Both are supported.
+> **注意：** Anthropic API 使用 `x-api-key` 头而不是 `Authorization: Bearer`。两者都支持。
 
 </details>
 
 <details>
-<summary>🔹 With System Prompt</summary>
+<summary>🔹 带系统提示</summary>
 
 ```bash
 curl http://localhost:8000/v1/messages \
@@ -676,17 +785,17 @@ curl http://localhost:8000/v1/messages \
   -d '{
     "model": "claude-sonnet-4-5",
     "max_tokens": 1024,
-    "system": "You are a helpful assistant.",
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "system": "你是一个有帮助的助手。",
+    "messages": [{"role": "user", "content": "你好！"}]
   }'
 ```
 
-> **Note:** In Anthropic API, `system` is a separate field, not a message.
+> **注意：** 在 Anthropic API 中，`system` 是一个单独的字段，而不是消息。
 
 </details>
 
 <details>
-<summary>📡 Streaming</summary>
+<summary>📡 流式传输</summary>
 
 ```bash
 curl http://localhost:8000/v1/messages \
@@ -697,7 +806,7 @@ curl http://localhost:8000/v1/messages \
     "model": "claude-sonnet-4-5",
     "max_tokens": 1024,
     "stream": true,
-    "messages": [{"role": "user", "content": "Hello!"}]
+    "messages": [{"role": "user", "content": "你好！"}]
   }'
 ```
 
@@ -710,23 +819,23 @@ curl http://localhost:8000/v1/messages \
 import anthropic
 
 client = anthropic.Anthropic(
-    api_key="my-super-secret-password-123",  # Your PROXY_API_KEY from .env
+    api_key="my-super-secret-password-123",  # 您在 .env 中的 PROXY_API_KEY
     base_url="http://localhost:8000"
 )
 
-# Non-streaming
+# 非流式
 response = client.messages.create(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "Hello!"}]
+    messages=[{"role": "user", "content": "你好！"}]
 )
 print(response.content[0].text)
 
-# Streaming
+# 流式
 with client.messages.stream(
     model="claude-sonnet-4-5",
     max_tokens=1024,
-    messages=[{"role": "user", "content": "Hello!"}]
+    messages=[{"role": "user", "content": "你好！"}]
 ) as stream:
     for text in stream.text_stream:
         print(text, end="", flush=True)
@@ -736,127 +845,89 @@ with client.messages.stream(
 
 ---
 
-## 🔧 Debugging
+## 🔧 调试
 
-Debug logging is **disabled by default**. To enable, add to your `.env`:
+调试日志**默认禁用**。要启用，请在您的 `.env` 中添加：
 
 ```env
-# Debug logging mode:
-# - off: disabled (default)
-# - errors: save logs only for failed requests (4xx, 5xx) - recommended for troubleshooting
-# - all: save logs for every request (overwrites on each request)
+# 调试日志模式：
+# - off：禁用（默认）
+# - errors：仅保存失败请求的日志（4xx、5xx）- 推荐用于故障排除
+# - all：保存每个请求的日志（每次请求时覆盖）
 DEBUG_MODE=errors
 ```
 
-### Debug Modes
+### 调试模式
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `off` | Disabled (default) | Production |
-| `errors` | Save logs only for failed requests (4xx, 5xx) | **Recommended for troubleshooting** |
-| `all` | Save logs for every request | Development/debugging |
+| 模式 | 描述 | 使用场景 |
+|------|------|----------|
+| `off` | 禁用（默认） | 生产环境 |
+| `errors` | 仅保存失败请求的日志（4xx、5xx） | **推荐用于故障排除** |
+| `all` | 保存每个请求的日志 | 开发/调试 |
 
-### Debug Files
+### 调试文件
 
-When enabled, requests are logged to the `debug_logs/` folder:
+启用后，请求将记录到 `debug_logs/` 文件夹：
 
-| File | Description |
-|------|-------------|
-| `request_body.json` | Incoming request from client (OpenAI format) |
-| `kiro_request_body.json` | Request sent to Kiro API |
-| `response_stream_raw.txt` | Raw stream from Kiro |
-| `response_stream_modified.txt` | Transformed stream (OpenAI format) |
-| `app_logs.txt` | Application logs for the request |
-| `error_info.json` | Error details (only on errors) |
-
----
-
-## 🔧 Troubleshooting
-
-### Connection Issues
-
-**Error: "Name or service not known" or DNS resolution failed**
-
-The Q API endpoint may not be publicly resolvable in your region. Use a VPN or proxy:
-
-```env
-VPN_PROXY_URL=http://127.0.0.1:7890
-```
-
-See [VPN/Proxy Support](#-vpnproxy-support) for details.
+| 文件 | 描述 |
+|------|------|
+| `request_body.json` | 来自客户端的传入请求（OpenAI 格式） |
+| `kiro_request_body.json` | 发送到 Kiro API 的请求 |
+| `response_stream_raw.txt` | 来自 Kiro 的原始流 |
+| `response_stream_modified.txt` | 转换后的流（OpenAI 格式） |
+| `app_logs.txt` | 请求的应用程序日志 |
+| `error_info.json` | 错误详情（仅在出错时） |
 
 ---
 
-**Error: "503 Service Unavailable" through proxy**
+## 📜 许可证
 
-The Q API endpoint exists in specific regions only. Try a different region:
+本项目采用 **GNU Affero 通用公共许可证 v3.0 (AGPL-3.0)** 许可。
 
-```env
-KIRO_API_REGION="eu-central-1"  # or us-east-1
-```
+这意味着：
+- ✅ 您可以使用、修改和分发此软件
+- ✅ 您可以将其用于商业目的
+- ⚠️ **您必须公开源代码** 当您分发软件时
+- ⚠️ **网络使用即为分发** — 如果您在服务器上运行修改版本并让他人与之交互，您必须向他们提供源代码
+- ⚠️ 修改必须在相同许可证下发布
 
-Commonly reachable regions: `us-east-1`, `eu-central-1`
+完整许可证文本请参见 [LICENSE](LICENSE) 文件。
 
----
+### 为什么选择 AGPL-3.0？
 
-**OIDC works but Q API fails**
+AGPL-3.0 确保对此软件的改进惠及整个社区。如果您修改此网关并将其部署为服务，您必须与您的用户分享您的改进。
 
-Your SSO region may differ from the Q API region. The gateway auto-detects this from credentials, but you can override:
+### 贡献者许可协议 (CLA)
 
-```env
-KIRO_API_REGION="eu-central-1"
-```
-
----
-
-## 📜 License
-
-This project is licensed under the **GNU Affero General Public License v3.0 (AGPL-3.0)**.
-
-This means:
-- ✅ You can use, modify, and distribute this software
-- ✅ You can use it for commercial purposes
-- ⚠️ **You must disclose source code** when you distribute the software
-- ⚠️ **Network use is distribution** — if you run a modified version on a server and let others interact with it, you must make the source code available to them
-- ⚠️ Modifications must be released under the same license
-
-See the [LICENSE](LICENSE) file for the full license text.
-
-### Why AGPL-3.0?
-
-AGPL-3.0 ensures that improvements to this software benefit the entire community. If you modify this gateway and deploy it as a service, you must share your improvements with your users.
-
-### Contributor License Agreement (CLA)
-
-By submitting a contribution to this project, you agree to the terms of our [Contributor License Agreement (CLA)](CLA.md). This ensures that:
-- You have the right to submit the contribution
-- You grant the maintainer rights to use and relicense your contribution
-- The project remains legally protected
+通过向本项目提交贡献，您同意我们的[贡献者许可协议 (CLA)](CLA.md) 的条款。这确保：
+- 您有权提交贡献
+- 您授予维护者使用和重新许可您的贡献的权利
+- 项目保持法律保护
 
 ---
 
-## 💖 Support the Project
+## 💖 支持项目
 
 <div align="center">
 
 <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Smilies/Smiling%20Face%20with%20Hearts.png" alt="Love" width="80" />
 
-**If this project saved you time or money, consider supporting it!**
+**如果这个项目为您节省了时间或金钱，请考虑支持它！**
 
-Every contribution helps keep this project alive and growing
-
-<br>
-
-### 🤑 Donate
-
-[**☕ One-time Support**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
+每一份贡献都有助于保持这个项目的活力和发展
 
 <br>
 
-### 🪙 Or send crypto
+### 🤑 捐赠
 
-| Currency | Network | Address |
-|:--------:|:-------:|:--------|
+[**☕ 一次性支持**](https://app.lava.top/products/b4e34d12-3b6b-49b7-be50-50b6a20ed262/f3ea941f-de73-4ad1-bbb6-f82042ef8132)
+
+<br>
+
+### 🪙 或发送加密货币
+
+| 货币 | 网络 | 地址 |
+|:----:|:----:|:-----|
 | **USDT** | TRC20 | `TSVtgRc9pkC1UgcbVeijBHjFmpkYHDRu26` |
 | **BTC** | Bitcoin | `12GZqxqpcBsqJ4Vf1YreLqwoMGvzBPgJq6` |
 | **ETH** | Ethereum | `0xc86eab3bba3bbaf4eb5b5fff8586f1460f1fd395` |
@@ -867,14 +938,14 @@ Every contribution helps keep this project alive and growing
 
 ---
 
-## ⚠️ Disclaimer
+## ⚠️ 免责声明
 
-This project is not affiliated with, endorsed by, or sponsored by Amazon Web Services (AWS), Anthropic, or Kiro IDE. Use at your own risk and in compliance with the terms of service of the underlying APIs.
+本项目与 Amazon Web Services (AWS)、Anthropic 或 Kiro IDE 无关，未经其认可或赞助。使用风险自负，并遵守底层 API 的服务条款。
 
 ---
 
 <div align="center">
 
-**[⬆ Back to Top](#-kiro-gateway)**
+**[⬆ 返回顶部](#-kiro-gateway)**
 
 </div>
