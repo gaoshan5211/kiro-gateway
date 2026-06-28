@@ -8,6 +8,7 @@ state.json
 .vscode/
 .idea/
 .shard/
+.kiro/
 
 # Python
 __pycache__/
@@ -22,14 +23,18 @@ build/
 # Debug logs (generated when DEBUG_MODE is enabled)
 debug_logs*/
 debug*.json
+logs/
 
 # Project-specific
 _notes/
 requests/
 CLAUDE.md
+部署说明.md
 docs/architecture.svg
+.DS_Store
 
 # Testing
 .pytest_cache/
 .coverage
 htmlcov/
+com.kiro-gateway.plist
