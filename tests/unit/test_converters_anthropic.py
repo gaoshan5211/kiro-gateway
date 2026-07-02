@@ -1493,11 +1493,17 @@ class TestAnthropicToKiro:
                 result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
 
         print(f"Result: {result}")
+        history = result["conversationState"]["history"]
         current_content = result["conversationState"]["currentMessage"][
             "userInputMessage"
         ]["content"]
         print(f"Current content: {current_content}")
-        assert "You are a helpful assistant." in current_content
+        assert "You are a helpful assistant." in history[0]["userInputMessage"]["content"]
+        assert history[0]["userInputMessage"]["origin"] == "AI_EDITOR"
+        assert history[0]["userInputMessage"]["modelId"] == "claude-sonnet-4.5"
+        assert history[1]["assistantResponseMessage"]["content"] == "I will follow these instructions."
+        assert "You are a helpful assistant." not in current_content
+        assert current_content == "Hello!"
 
     def test_inline_system_role_is_merged_into_system_prompt(self):
         """
@@ -1535,22 +1541,22 @@ class TestAnthropicToKiro:
 
         print(f"Result: {result}")
         history = result["conversationState"].get("history", [])
-        assert len(history) == 2
+        assert len(history) == 4
 
         first_user_content = history[0]["userInputMessage"]["content"]
         assert "Top-level system prompt" in first_user_content
         assert "<system-reminder>be concise</system-reminder>" in first_user_content
-        assert "hello" in first_user_content
+        assert "hello" not in first_user_content
+        assert history[1]["assistantResponseMessage"]["content"] == "I will follow these instructions."
+        assert history[2]["userInputMessage"]["content"] == "hello"
+        assert history[3]["assistantResponseMessage"]["content"] == "hi"
         assert first_user_content.index("Top-level system prompt") < first_user_content.index(
             "<system-reminder>be concise</system-reminder>"
         )
-        assert first_user_content.index(
-            "<system-reminder>be concise</system-reminder>"
-        ) < first_user_content.index("hello")
 
         history_text = "\n".join(
             entry.get("userInputMessage", {}).get("content", "")
-            for entry in history[1:]
+            for entry in history[2:]
         )
         assert "<system-reminder>be concise</system-reminder>" not in history_text
 
@@ -1641,9 +1647,10 @@ class TestAnthropicToKiro:
         print(f"Result: {result}")
         history = result["conversationState"].get("history", [])
         print(f"History length: {len(history)}")
-        assert len(history) == 2  # First user + assistant
-        assert "userInputMessage" in history[0]
-        assert "assistantResponseMessage" in history[1]
+        assert "userInputMessage" in history[-2]
+        assert history[-2]["userInputMessage"]["content"] == "Hello"
+        assert "assistantResponseMessage" in history[-1]
+        assert history[-1]["assistantResponseMessage"]["content"] == "Hi! How can I help?"
 
     def test_handles_tool_use_and_result_flow(self):
         """

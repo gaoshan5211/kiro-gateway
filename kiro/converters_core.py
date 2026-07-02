@@ -31,6 +31,7 @@ to convert their formats to Kiro API format.
 """
 
 import json
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -45,6 +46,9 @@ from kiro.config import (
     AUTO_TRIM_PAYLOAD,
 )
 from kiro.payload_guards import check_payload_size, trim_payload_to_limit
+
+
+SYSTEM_PROMPT_ACK = "I will follow these instructions."
 
 
 # ==================================================================================================
@@ -1339,29 +1343,10 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
     for msg in messages:
         if msg.role == "user":
             content = extract_text_content(msg.content)
-            
-            # Fallback for empty content - Kiro API requires non-empty content
-            if not content:
-                content = "(empty placeholder)"
-            
-            user_input = {
-                "content": content,
-                "modelId": model_id,
-                "origin": "AI_EDITOR",
-            }
-            
-            # Process images - extract from message or content
-            # IMPORTANT: images go directly into userInputMessage, NOT into userInputMessageContext
-            # This matches the native Kiro IDE format
-            images = msg.images or extract_images_from_content(msg.content)
-            if images:
-                kiro_images = convert_images_to_kiro_format(images)
-                if kiro_images:
-                    user_input["images"] = kiro_images
-            
+
             # Build userInputMessageContext for tools and toolResults only
             user_input_context: Dict[str, Any] = {}
-            
+
             # Process tool_results - convert to Kiro format if present
             if msg.tool_results:
                 kiro_tool_results = convert_tool_results_to_kiro_format(msg.tool_results)
@@ -1372,7 +1357,26 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 tool_results = extract_tool_results_from_content(msg.content)
                 if tool_results:
                     user_input_context["toolResults"] = tool_results
-            
+
+            # Native Kiro IDE keeps tool-result-only turns with empty content.
+            if not content and "toolResults" not in user_input_context:
+                content = "(empty placeholder)"
+
+            user_input = {
+                "content": content,
+                "modelId": model_id,
+                "origin": "AI_EDITOR",
+            }
+
+            # Process images - extract from message or content
+            # IMPORTANT: images go directly into userInputMessage, NOT into userInputMessageContext
+            # This matches the native Kiro IDE format
+            images = msg.images or extract_images_from_content(msg.content)
+            if images:
+                kiro_images = convert_images_to_kiro_format(images)
+                if kiro_images:
+                    user_input["images"] = kiro_images
+
             # Add context if not empty (contains toolResults only, not images)
             if user_input_context:
                 user_input["userInputMessageContext"] = user_input_context
@@ -1396,6 +1400,40 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
             history.append({"assistantResponseMessage": assistant_response})
     
     return history
+
+
+def build_kiro_system_history(system_prompt: str, model_id: str) -> List[Dict[str, Any]]:
+    """
+    Build native Kiro IDE-style system priming history entries.
+
+    Kiro IDE sends system/context instructions as a synthetic user history message
+    followed by a short assistant acknowledgment, instead of merging the system
+    prompt into the first real user message.
+
+    Args:
+        system_prompt: System prompt text to send to Kiro.
+        model_id: Internal Kiro model ID.
+
+    Returns:
+        Two history entries when system_prompt is non-empty, otherwise an empty list.
+    """
+    if not system_prompt:
+        return []
+
+    return [
+        {
+            "userInputMessage": {
+                "content": system_prompt,
+                "modelId": model_id,
+                "origin": "AI_EDITOR",
+            }
+        },
+        {
+            "assistantResponseMessage": {
+                "content": SYSTEM_PROMPT_ACK,
+            }
+        },
+    ]
 
 
 # ==================================================================================================
@@ -1485,22 +1523,12 @@ def build_kiro_payload(
     # Build history (all messages except the last one)
     history_messages = merged_messages[:-1] if len(merged_messages) > 1 else []
     
-    # If there's a system prompt, add it to the first user message in history
-    if full_system_prompt and history_messages:
-        first_msg = history_messages[0]
-        if first_msg.role == "user":
-            original_content = extract_text_content(first_msg.content)
-            first_msg.content = f"{full_system_prompt}\n\n{original_content}"
-    
-    history = build_kiro_history(history_messages, model_id)
+    history = build_kiro_system_history(full_system_prompt, model_id)
+    history.extend(build_kiro_history(history_messages, model_id))
     
     # Current message (the last one)
     current_message = merged_messages[-1]
     current_content = extract_text_content(current_message.content)
-    
-    # If system prompt exists but history is empty - add to current message
-    if full_system_prompt and not history:
-        current_content = f"{full_system_prompt}\n\n{current_content}"
     
     # If current message is assistant, need to add it to history
     # and create user message placeholder
@@ -1510,10 +1538,6 @@ def build_kiro_payload(
                 "content": current_content
             }
         })
-        current_content = "(empty placeholder)"
-    
-    # If content is empty - use placeholder
-    if not current_content:
         current_content = "(empty placeholder)"
     
     # Process images in current message - extract from message or content
@@ -1545,9 +1569,16 @@ def build_kiro_payload(
         tool_results = extract_tool_results_from_content(current_message.content)
         if tool_results:
             user_input_context["toolResults"] = tool_results
-    
-    # Inject thinking tags if enabled (only for the current/last user message)
-    if current_message.role == "user":
+
+    has_current_tool_results = "toolResults" in user_input_context
+
+    # Native Kiro IDE allows the active tool-result turn to have empty content.
+    if not current_content and not has_current_tool_results:
+        current_content = "(empty placeholder)"
+
+    # Inject thinking tags only for normal current user input. Tool-result-only
+    # turns should preserve the native empty-content shape.
+    if current_message.role == "user" and not (has_current_tool_results and not current_content):
         current_content = inject_thinking_tags(current_content, thinking_config)
     
     # Build userInputMessage
@@ -1568,6 +1599,8 @@ def build_kiro_payload(
     # Assemble final payload
     payload = {
         "conversationState": {
+            "agentContinuationId": str(uuid.uuid4()),
+            "agentTaskType": "vibe",
             "chatTriggerType": "MANUAL",
             "conversationId": conversation_id,
             "currentMessage": {

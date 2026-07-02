@@ -9,6 +9,7 @@ Tests for OpenAI-specific conversion logic:
 - Building Kiro payload from OpenAI requests
 """
 
+import uuid
 import pytest
 from unittest.mock import patch
 
@@ -687,13 +688,15 @@ class TestBuildKiroPayload:
         print(f"Result: {result}")
         assert "conversationState" in result
         assert result["conversationState"]["conversationId"] == "conv-123"
+        assert result["conversationState"]["agentTaskType"] == "vibe"
+        uuid.UUID(result["conversationState"]["agentContinuationId"])
         assert "currentMessage" in result["conversationState"]
         assert result["profileArn"] == "arn:aws:test"
     
     def test_includes_system_prompt_in_first_message(self):
         """
-        What it does: Verifies adding system prompt to first message.
-        Purpose: Ensure system prompt is merged with user message.
+        What it does: Verifies adding system prompt as native Kiro IDE history.
+        Purpose: Ensure system prompt is sent as a priming user/assistant pair.
         """
         print("Setup: Request with system prompt...")
         request = ChatCompletionRequest(
@@ -708,8 +711,12 @@ class TestBuildKiroPayload:
         result = build_kiro_payload(request, "conv-123", "")
         
         print(f"Result: {result}")
+        history = result["conversationState"]["history"]
         current_content = result["conversationState"]["currentMessage"]["userInputMessage"]["content"]
-        assert "You are helpful" in current_content
+        assert "You are helpful" in history[0]["userInputMessage"]["content"]
+        assert history[0]["userInputMessage"]["origin"] == "AI_EDITOR"
+        assert history[1]["assistantResponseMessage"]["content"] == "I will follow these instructions."
+        assert "You are helpful" not in current_content
         assert "Hello" in current_content
     
     def test_builds_history_for_multi_turn(self):
@@ -732,7 +739,9 @@ class TestBuildKiroPayload:
         
         print(f"Result: {result}")
         assert "history" in result["conversationState"]
-        assert len(result["conversationState"]["history"]) == 2
+        history = result["conversationState"]["history"]
+        assert history[-2]["userInputMessage"]["content"] == "Hello"
+        assert history[-1]["assistantResponseMessage"]["content"] == "Hi"
     
     def test_handles_assistant_as_last_message(self):
         """
@@ -864,10 +873,10 @@ class TestBuildKiroPayload:
         assert len(context["tools"]) == 1
         assert context["tools"][0]["toolSpecification"]["name"] == "get_weather"
     
-    def test_injects_thinking_tags_even_when_tool_results_present(self):
+    def test_preserves_empty_content_for_tool_result_only_current_message(self):
         """
-        What it does: Verifies thinking tags ARE injected even when toolResults are present.
-        Purpose: Extended thinking should work in all scenarios including tool use flows.
+        What it does: Verifies tool-result-only current messages keep empty content.
+        Purpose: Match native Kiro IDE tool-result continuation payload shape.
         """
         print("Setup: Request where last message is a tool result...")
         request = ChatCompletionRequest(
@@ -911,8 +920,8 @@ class TestBuildKiroPayload:
         print(f"Has toolResults: {'toolResults' in context}")
         
         assert "toolResults" in context, "toolResults should be present"
-        assert "<thinking_mode>enabled</thinking_mode>" in content, "thinking tags SHOULD be injected even with toolResults"
-        assert "<max_thinking_length>4000</max_thinking_length>" in content, "max_thinking_length should be present"
+        assert "tools" in context, "tools should stay attached to the current message"
+        assert content == "", "tool-result-only current message should preserve native empty content"
     
     def test_injects_thinking_tags_when_no_tool_results(self):
         """
@@ -1316,8 +1325,11 @@ class TestBuildKiroPayloadToolCallsIntegration:
         # Should have userInputMessage and assistantResponseMessage in history
         assert len(history) >= 2, f"Expected at least 2 elements in history, got {len(history)}"
         
-        # Find assistantResponseMessage
-        assistant_msgs = [h for h in history if "assistantResponseMessage" in h]
+        # Find assistantResponseMessage with real toolUses, skipping synthetic system ack.
+        assistant_msgs = [
+            h for h in history
+            if h.get("assistantResponseMessage", {}).get("toolUses")
+        ]
         print(f"Assistant messages in history: {assistant_msgs}")
         assert len(assistant_msgs) >= 1, "Should have at least one assistantResponseMessage"
         
@@ -1375,10 +1387,12 @@ class TestBuildKiroPayloadToolCallsIntegration:
             result = build_kiro_payload(request, "conv-123", "")
         
         print("Checking that system prompt contains tool documentation...")
+        system_content = result["conversationState"]["history"][0]["userInputMessage"]["content"]
         current_content = result["conversationState"]["currentMessage"]["userInputMessage"]["content"]
-        assert "You are helpful" in current_content
-        assert "## Tool: long_tool" in current_content
-        assert long_desc in current_content
+        assert "You are helpful" in system_content
+        assert "## Tool: long_tool" in system_content
+        assert long_desc in system_content
+        assert "## Tool: long_tool" not in current_content
         
         print("Checking that tool in context has reference description...")
         tools_context = result["conversationState"]["currentMessage"]["userInputMessage"]["userInputMessageContext"]["tools"]

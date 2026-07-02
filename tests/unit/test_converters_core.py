@@ -5715,11 +5715,15 @@ class TestBuildKiroPayloadImages:
         print(f"History length: {len(history)}")
         assert len(history) >= 1
         
-        print("Checking that first history message has images directly in userInputMessage (Issue #32 fix)...")
-        first_msg = history[0]["userInputMessage"]
-        assert "images" in first_msg
-        
-        images = first_msg["images"]
+        print("Checking that real history message has images directly in userInputMessage (Issue #32 fix)...")
+        image_msgs = [
+            entry["userInputMessage"]
+            for entry in history
+            if "images" in entry.get("userInputMessage", {})
+        ]
+        assert len(image_msgs) == 1
+
+        images = image_msgs[0]["images"]
         print(f"History images: {images}")
         assert len(images) == 1
         assert images[0]["format"] == "jpeg"
