@@ -355,6 +355,7 @@ FALLBACK_MODELS: List[Dict[str, str]] = [
     {"modelId": "claude-sonnet-4"},
     {"modelId": "claude-sonnet-4.5"},
     {"modelId": "claude-sonnet-4.6"},
+    {"modelId": "claude-sonnet-5"},
     {"modelId": "claude-haiku-4.5"},
     {"modelId": "claude-opus-4.5"},
     {"modelId": "claude-opus-4.6"},
@@ -427,13 +428,13 @@ LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()
 # Timeout for waiting for the first token from the model (in seconds).
 # If the model doesn't respond within this time, the request will be cancelled and retried.
 # This helps handle "stuck" requests when the model takes too long to think.
-# Default: 30 seconds (recommended for production)
+# Default: 300 seconds (recommended for slow model startup)
 # Set a lower value (e.g., 10-15) for more aggressive retry.
-FIRST_TOKEN_TIMEOUT: float = float(os.getenv("FIRST_TOKEN_TIMEOUT", "15"))
+FIRST_TOKEN_TIMEOUT: float = float(os.getenv("FIRST_TOKEN_TIMEOUT", "300"))
 
 # Read timeout for streaming responses (in seconds).
 # This is the maximum time to wait for data between chunks during streaming.
-# Should be longer than FIRST_TOKEN_TIMEOUT since the model may pause between chunks
+# Should be at least as long as FIRST_TOKEN_TIMEOUT since the model may pause between chunks
 # while "thinking" (especially for tool calls or complex reasoning).
 # Default: 300 seconds (5 minutes) - generous timeout to avoid premature disconnects.
 STREAMING_READ_TIMEOUT: float = float(os.getenv("STREAMING_READ_TIMEOUT", "300"))
@@ -467,11 +468,11 @@ def _warn_timeout_configuration():
     Print warning if timeout configuration is suboptimal.
     Called at application startup.
     
-    FIRST_TOKEN_TIMEOUT should be less than STREAMING_READ_TIMEOUT:
+    FIRST_TOKEN_TIMEOUT should not exceed STREAMING_READ_TIMEOUT:
     - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding
     - STREAMING_READ_TIMEOUT: time to wait BETWEEN chunks during streaming
     """
-    if FIRST_TOKEN_TIMEOUT >= STREAMING_READ_TIMEOUT:
+    if FIRST_TOKEN_TIMEOUT > STREAMING_READ_TIMEOUT:
         import sys
         YELLOW = "\033[93m"
         RESET = "\033[0m"
@@ -479,16 +480,16 @@ def _warn_timeout_configuration():
         warning_text = f"""
 {YELLOW}⚠️  WARNING: Suboptimal timeout configuration detected.
     
-    FIRST_TOKEN_TIMEOUT ({FIRST_TOKEN_TIMEOUT}s) >= STREAMING_READ_TIMEOUT ({STREAMING_READ_TIMEOUT}s)
+    FIRST_TOKEN_TIMEOUT ({FIRST_TOKEN_TIMEOUT}s) > STREAMING_READ_TIMEOUT ({STREAMING_READ_TIMEOUT}s)
     
     These timeouts serve different purposes:
-      - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding (default: 15s)
+      - FIRST_TOKEN_TIMEOUT: time to wait for model to START responding (default: 300s)
       - STREAMING_READ_TIMEOUT: time to wait BETWEEN chunks during streaming (default: 300s)
     
-    Recommendation: FIRST_TOKEN_TIMEOUT should be LESS than STREAMING_READ_TIMEOUT.
+    Recommendation: FIRST_TOKEN_TIMEOUT should not exceed STREAMING_READ_TIMEOUT.
     
     Example configuration:
-      FIRST_TOKEN_TIMEOUT=15
+      FIRST_TOKEN_TIMEOUT=300
       STREAMING_READ_TIMEOUT=300{RESET}
 """
         print(warning_text, file=sys.stderr)

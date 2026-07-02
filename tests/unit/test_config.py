@@ -181,6 +181,29 @@ class TestToolDescriptionMaxLengthConfig:
 
 class TestTimeoutConfigurationWarning:
     """Tests for _warn_timeout_configuration() function."""
+
+    def test_default_first_token_timeout_is_300_seconds(self):
+        """
+        What it does: Verifies FIRST_TOKEN_TIMEOUT defaults to 300 seconds.
+        Purpose: Ensure slow model startup is allowed unless explicitly configured lower.
+        """
+        print("Setup: Mocking os.getenv for FIRST_TOKEN_TIMEOUT...")
+
+        original_getenv = os.getenv
+
+        def mock_getenv(key, default=None):
+            if key == "FIRST_TOKEN_TIMEOUT":
+                print(f"os.getenv('{key}') -> default {default} (mocked)")
+                return default
+            return original_getenv(key, default)
+
+        with patch.object(os, 'getenv', side_effect=mock_getenv):
+            import importlib
+            import kiro.config as config_module
+            importlib.reload(config_module)
+
+            print(f"FIRST_TOKEN_TIMEOUT: {config_module.FIRST_TOKEN_TIMEOUT}")
+            assert config_module.FIRST_TOKEN_TIMEOUT == 300.0
     
     def test_no_warning_when_first_token_less_than_streaming(self, capsys):
         """
@@ -207,10 +230,10 @@ class TestTimeoutConfigurationWarning:
             assert "WARNING" not in captured.err
             assert "Suboptimal timeout configuration" not in captured.err
     
-    def test_warning_when_first_token_equals_streaming(self, capsys):
+    def test_no_warning_when_first_token_equals_streaming(self, capsys):
         """
-        What it does: Verifies that warning is shown when timeouts are equal.
-        Purpose: Ensure that warning when FIRST_TOKEN_TIMEOUT == STREAMING_READ_TIMEOUT.
+        What it does: Verifies that warning is NOT shown when timeouts are equal.
+        Purpose: Ensure that FIRST_TOKEN_TIMEOUT can match STREAMING_READ_TIMEOUT.
         """
         print("Setup: FIRST_TOKEN_TIMEOUT=300, STREAMING_READ_TIMEOUT=300...")
         
@@ -228,8 +251,9 @@ class TestTimeoutConfigurationWarning:
             captured = capsys.readouterr()
             print(f"Captured stderr: {captured.err}")
             
-            # Warning SHOULD be shown
-            assert "WARNING" in captured.err or "Suboptimal timeout configuration" in captured.err
+            # Warning should NOT be shown
+            assert "WARNING" not in captured.err
+            assert "Suboptimal timeout configuration" not in captured.err
     
     def test_warning_when_first_token_greater_than_streaming(self, capsys):
         """
@@ -280,7 +304,7 @@ class TestTimeoutConfigurationWarning:
             print(f"Captured stderr: {captured.err}")
             
             # Warning should contain recommendation
-            assert "Recommendation" in captured.err or "LESS than" in captured.err
+            assert "Recommendation" in captured.err or "not exceed" in captured.err
 
 
 class TestAwsSsoOidcUrlConfig:

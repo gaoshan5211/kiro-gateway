@@ -58,16 +58,19 @@ class TestDebugLoggerModeOff:
 class TestDebugLoggerModeAll:
     """Тесты для режима DEBUG_MODE=all."""
     
-    def test_prepare_new_request_clears_directory(self, tmp_path):
+    def test_prepare_new_request_preserves_archive_and_clears_latest_files(self, tmp_path):
         """
-        Что он делает: Проверяет, что prepare_new_request очищает директорию в режиме all.
-        Цель: Убедиться, что старые логи удаляются.
+        What it does: Verifies that all mode preserves archived logs.
+        Purpose: Ensure only top-level latest files are rotated between requests.
         """
-        print("Настройка: Режим all, создаём старый файл...")
+        print("Setup: Mode all with archived and latest files...")
         debug_dir = tmp_path / "debug_logs"
-        debug_dir.mkdir()
-        old_file = debug_dir / "old_file.txt"
-        old_file.write_text("old content")
+        archive_dir = debug_dir / "requests" / "existing-request"
+        archive_dir.mkdir(parents=True)
+        archived_file = archive_dir / "request_body.json"
+        archived_file.write_text('{"model": "old"}')
+        latest_file = debug_dir / "request_body.json"
+        latest_file.write_text('{"model": "latest"}')
         
         with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
             from kiro.debug_logger import DebugLogger
@@ -76,13 +79,49 @@ class TestDebugLoggerModeAll:
             logger.__init__()
             logger.debug_dir = debug_dir
             
-            print("Действие: Вызов prepare_new_request...")
+            print("Action: Calling prepare_new_request...")
             logger.prepare_new_request()
             
-            print(f"Проверяем, что старый файл удалён...")
-            assert not old_file.exists()
-            print(f"Проверяем, что директория существует...")
+            print("Assert: archived files remain and latest files are rotated...")
+            assert archived_file.exists()
+            assert not latest_file.exists()
             assert debug_dir.exists()
+            assert logger._get_request_dir().parent == debug_dir / "requests"
+
+            logger._clear_app_logs_buffer()
+
+    def test_mode_all_archives_each_request_separately(self, tmp_path):
+        """
+        What it does: Writes two all-mode requests and verifies both are retained.
+        Purpose: Prevent regressions where DEBUG_MODE=all keeps only the last request.
+        """
+        print("Setup: Mode all with an empty debug directory...")
+        debug_dir = tmp_path / "debug_logs"
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
+            from kiro.debug_logger import DebugLogger
+            logger = DebugLogger.__new__(DebugLogger)
+            logger._initialized = False
+            logger.__init__()
+            logger.debug_dir = debug_dir
+
+            print("Action: Logging the first request...")
+            logger.prepare_new_request()
+            logger.log_request_body(b'{"model": "first"}')
+            first_dir = logger._get_request_dir()
+            logger.discard_buffers()
+
+            print("Action: Logging the second request...")
+            logger.prepare_new_request()
+            logger.log_request_body(b'{"model": "second"}')
+            second_dir = logger._get_request_dir()
+            logger.discard_buffers()
+
+            print("Assert: both archived request bodies exist and latest points to second...")
+            assert first_dir != second_dir
+            assert json.loads((first_dir / "request_body.json").read_text())["model"] == "first"
+            assert json.loads((second_dir / "request_body.json").read_text())["model"] == "second"
+            assert json.loads((debug_dir / "request_body.json").read_text())["model"] == "second"
     
     def test_log_request_body_writes_immediately(self, tmp_path):
         """

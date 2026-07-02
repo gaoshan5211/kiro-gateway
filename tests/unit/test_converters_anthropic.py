@@ -1499,6 +1499,61 @@ class TestAnthropicToKiro:
         print(f"Current content: {current_content}")
         assert "You are a helpful assistant." in current_content
 
+    def test_inline_system_role_is_merged_into_system_prompt(self):
+        """
+        What it does: Verifies inline role="system" messages are treated as system prompt.
+        Purpose: Claude Code Desktop may send system reminders inside messages[].
+        """
+        print("Setup: Request with inline system message between conversation turns...")
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-5",
+            messages=[
+                AnthropicMessage(role="user", content="hello"),
+                AnthropicMessage(role="assistant", content="hi"),
+                AnthropicMessage(
+                    role="system",
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "<system-reminder>be concise</system-reminder>",
+                        }
+                    ],
+                ),
+                AnthropicMessage(role="user", content="final question"),
+            ],
+            max_tokens=1024,
+            system="Top-level system prompt",
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        print(f"Result: {result}")
+        history = result["conversationState"].get("history", [])
+        assert len(history) == 2
+
+        first_user_content = history[0]["userInputMessage"]["content"]
+        assert "Top-level system prompt" in first_user_content
+        assert "<system-reminder>be concise</system-reminder>" in first_user_content
+        assert "hello" in first_user_content
+        assert first_user_content.index("Top-level system prompt") < first_user_content.index(
+            "<system-reminder>be concise</system-reminder>"
+        )
+        assert first_user_content.index(
+            "<system-reminder>be concise</system-reminder>"
+        ) < first_user_content.index("hello")
+
+        history_text = "\n".join(
+            entry.get("userInputMessage", {}).get("content", "")
+            for entry in history[1:]
+        )
+        assert "<system-reminder>be concise</system-reminder>" not in history_text
+
     def test_includes_tools(self):
         """
         What it does: Verifies that tools are included in payload.

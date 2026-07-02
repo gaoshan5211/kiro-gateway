@@ -525,6 +525,38 @@ class TestAnthropicMessageWithImages:
 
 
 # ==================================================================================================
+# Tests for AnthropicMessage role acceptance
+# ==================================================================================================
+
+class TestAnthropicMessageRole:
+    """Tests for AnthropicMessage role acceptance."""
+
+    def test_accepts_inline_system_role(self):
+        """
+        What it does: Verifies AnthropicMessage accepts role="system".
+        Purpose: Claude Code Desktop may inline system reminders in messages[].
+        """
+        print("Setup: Creating AnthropicMessage with inline system role...")
+        message = AnthropicMessage(
+            role="system",
+            content="<system-reminder>context</system-reminder>",
+        )
+
+        print(f"Comparing role: Expected 'system', Got '{message.role}'")
+        assert message.role == "system"
+        assert message.content == "<system-reminder>context</system-reminder>"
+
+    def test_rejects_unknown_role(self):
+        """
+        What it does: Verifies unrelated roles still fail validation.
+        Purpose: Keep this as a narrow compatibility allowance, not open-ended input.
+        """
+        print("Setup: Creating AnthropicMessage with unsupported developer role...")
+        with pytest.raises(ValidationError):
+            AnthropicMessage(role="developer", content="context")
+
+
+# ==================================================================================================
 # Tests for AnthropicMessagesRequest with Image Content
 # ==================================================================================================
 

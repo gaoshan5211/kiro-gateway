@@ -23,7 +23,7 @@ Debug logging module for requests.
 Supports three modes (DEBUG_MODE):
 - off: logging disabled
 - errors: logs are saved only on errors (4xx, 5xx)
-- all: logs are overwritten on each request
+- all: logs are saved for every request
 
 In "errors" mode, data is buffered in memory and flushed to files
 only when flush_on_error() is called.
@@ -32,7 +32,10 @@ Also captures application logs (loguru) for each request and saves
 them to app_logs.txt file for debugging convenience.
 """
 
+from contextvars import ContextVar
+from datetime import datetime
 import io
+from itertools import count
 import json
 import shutil
 from pathlib import Path
@@ -49,7 +52,7 @@ class DebugLogger:
     Operating modes:
     - off: does nothing
     - errors: buffers data, flushes to files only on errors
-    - all: writes data immediately to files (as before)
+    - all: writes each request to its own directory immediately
     """
     _instance = None
 
@@ -63,6 +66,11 @@ class DebugLogger:
         if self._initialized:
             return
         self.debug_dir = Path(DEBUG_DIR)
+        self._request_counter = count(1)
+        self._active_request_dir: ContextVar[Optional[Path]] = ContextVar(
+            "debug_logger_active_request_dir",
+            default=None,
+        )
         self._initialized = True
         
         # Buffers for "errors" mode
@@ -90,6 +98,69 @@ class DebugLogger:
         self._raw_chunks_buffer.clear()
         self._modified_chunks_buffer.clear()
         self._clear_app_logs_buffer()
+        self._active_request_dir.set(None)
+
+    def _clear_latest_files(self) -> None:
+        """
+        Remove top-level "latest request" files while preserving request archives.
+
+        In DEBUG_MODE=all, every request is written to a dedicated directory under
+        debug_logs/requests/. The top-level files are still maintained as a quick
+        view of the latest request, so only those files are removed here.
+        """
+        latest_files = (
+            "request_body.json",
+            "kiro_request_body.json",
+            "response_stream_raw.txt",
+            "response_stream_modified.txt",
+            "error_info.json",
+            "app_logs.txt",
+        )
+        for name in latest_files:
+            path = self.debug_dir / name
+            if path.exists() and path.is_file():
+                path.unlink()
+
+    def _create_request_dir(self) -> Path:
+        """
+        Create a unique directory for the current DEBUG_MODE=all request.
+
+        Returns:
+            Path to the per-request debug directory.
+        """
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        sequence = next(self._request_counter)
+        request_dir = self.debug_dir / "requests" / f"{timestamp}-{sequence:06d}"
+        request_dir.mkdir(parents=True, exist_ok=True)
+        return request_dir
+
+    def _get_request_dir(self) -> Path:
+        """
+        Return the current request's write directory.
+
+        If a method is called without prepare_new_request(), fall back to the root
+        debug directory. This keeps direct unit tests and manual calls simple.
+        """
+        if self._is_immediate_write():
+            active_dir = self._active_request_dir.get()
+            if active_dir is not None:
+                return active_dir
+        return self.debug_dir
+
+    def _get_output_paths(self, filename: str) -> list[Path]:
+        """
+        Return output paths for a debug artifact.
+
+        DEBUG_MODE=all writes both the archived per-request file and a top-level
+        latest copy. Other modes write only the top-level file.
+        """
+        request_dir = self._get_request_dir()
+        paths = [request_dir / filename]
+
+        if self._is_immediate_write() and request_dir != self.debug_dir:
+            paths.append(self.debug_dir / filename)
+
+        return paths
     
     def _clear_app_logs_buffer(self):
         """Clears the application logs buffer and removes sink."""
@@ -130,7 +201,7 @@ class DebugLogger:
         """
         Prepares the logger for a new request.
         
-        In "all" mode: clears the logs folder.
+        In "all" mode: creates a new per-request log directory.
         In "errors" mode: clears buffers.
         In both modes: sets up application log capture.
         """
@@ -144,12 +215,13 @@ class DebugLogger:
         self._setup_app_logs_capture()
 
         if self._is_immediate_write():
-            # "all" mode - clear folder and recreate
+            # "all" mode - preserve history and rotate only the top-level latest files.
             try:
-                if self.debug_dir.exists():
-                    shutil.rmtree(self.debug_dir)
                 self.debug_dir.mkdir(parents=True, exist_ok=True)
-                logger.debug(f"[DebugLogger] Directory {self.debug_dir} cleared for new request.")
+                self._clear_latest_files()
+                request_dir = self._create_request_dir()
+                self._active_request_dir.set(request_dir)
+                logger.debug(f"[DebugLogger] Request logs will be written to {request_dir}.")
             except Exception as e:
                 logger.error(f"[DebugLogger] Error preparing directory: {e}")
 
@@ -240,9 +312,10 @@ class DebugLogger:
                 "status_code": status_code,
                 "error_message": error_message
             }
-            error_file = self.debug_dir / "error_info.json"
-            with open(error_file, "w", encoding="utf-8") as f:
-                json.dump(error_info, f, indent=2, ensure_ascii=False)
+            for error_file in self._get_output_paths("error_info.json"):
+                error_file.parent.mkdir(parents=True, exist_ok=True)
+                with open(error_file, "w", encoding="utf-8") as f:
+                    json.dump(error_info, f, indent=2, ensure_ascii=False)
             
             logger.debug(f"[DebugLogger] Error info saved (status={status_code})")
         except Exception as e:
@@ -267,6 +340,7 @@ class DebugLogger:
             self.log_error_info(status_code, error_message)
             self._write_app_logs_to_file()
             self._clear_app_logs_buffer()
+            self._active_request_dir.set(None)
             return
         
         # Check if there's anything to flush
@@ -328,52 +402,57 @@ class DebugLogger:
             # In "all" mode save logs even for successful requests
             self._write_app_logs_to_file()
             self._clear_app_logs_buffer()
+            self._active_request_dir.set(None)
     
     # ==================== Private file writing methods ====================
     
     def _write_request_body_to_file(self, body: bytes):
         """Writes request body to file."""
         try:
-            file_path = self.debug_dir / "request_body.json"
-            try:
-                json_obj = json.loads(body)
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(json_obj, f, indent=2, ensure_ascii=False)
-            except json.JSONDecodeError:
-                with open(file_path, "wb") as f:
-                    f.write(body)
+            for file_path in self._get_output_paths("request_body.json"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    json_obj = json.loads(body)
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        json.dump(json_obj, f, indent=2, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    with open(file_path, "wb") as f:
+                        f.write(body)
         except Exception as e:
             logger.error(f"[DebugLogger] Error writing request_body: {e}")
     
     def _write_kiro_request_body_to_file(self, body: bytes):
         """Writes Kiro request body to file."""
         try:
-            file_path = self.debug_dir / "kiro_request_body.json"
-            try:
-                json_obj = json.loads(body)
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump(json_obj, f, indent=2, ensure_ascii=False)
-            except json.JSONDecodeError:
-                with open(file_path, "wb") as f:
-                    f.write(body)
+            for file_path in self._get_output_paths("kiro_request_body.json"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    json_obj = json.loads(body)
+                    with open(file_path, "w", encoding="utf-8") as f:
+                        json.dump(json_obj, f, indent=2, ensure_ascii=False)
+                except json.JSONDecodeError:
+                    with open(file_path, "wb") as f:
+                        f.write(body)
         except Exception as e:
             logger.error(f"[DebugLogger] Error writing kiro_request_body: {e}")
     
     def _append_raw_chunk_to_file(self, chunk: bytes):
         """Appends raw chunk to file."""
         try:
-            file_path = self.debug_dir / "response_stream_raw.txt"
-            with open(file_path, "ab") as f:
-                f.write(chunk)
+            for file_path in self._get_output_paths("response_stream_raw.txt"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "ab") as f:
+                    f.write(chunk)
         except Exception:
             pass
     
     def _append_modified_chunk_to_file(self, chunk: bytes):
         """Appends modified chunk to file."""
         try:
-            file_path = self.debug_dir / "response_stream_modified.txt"
-            with open(file_path, "ab") as f:
-                f.write(chunk)
+            for file_path in self._get_output_paths("response_stream_modified.txt"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "ab") as f:
+                    f.write(chunk)
         except Exception:
             pass
     
@@ -389,11 +468,12 @@ class DebugLogger:
             # Ensure directory exists
             self.debug_dir.mkdir(parents=True, exist_ok=True)
             
-            file_path = self.debug_dir / "app_logs.txt"
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(logs_content)
+            for file_path in self._get_output_paths("app_logs.txt"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(logs_content)
             
-            logger.debug(f"[DebugLogger] App logs saved to {file_path}")
+            logger.debug(f"[DebugLogger] App logs saved to {self._get_request_dir()}")
         except Exception as e:
             # Don't log error via logger to avoid recursion
             pass
