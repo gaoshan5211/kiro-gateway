@@ -51,7 +51,7 @@ from kiro.streaming_anthropic import (
     stream_with_first_token_retry_anthropic,
 )
 from kiro.http_client import KiroHttpClient
-from kiro.utils import generate_conversation_id
+from kiro.utils import derive_conversation_id_from_metadata, generate_conversation_id
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
@@ -377,7 +377,10 @@ async def messages(
             model_resolver = account.model_resolver
             
             # Generate conversation ID
-            conversation_id = generate_conversation_id()
+            conversation_id = (
+                derive_conversation_id_from_metadata(request_data.metadata)
+                or generate_conversation_id()
+            )
             
             # Build payload for Kiro
             # profileArn is required by runtime.kiro.dev for all auth types
@@ -684,8 +687,14 @@ async def messages(
     # Normal Flow (Path B will be intercepted in streaming, or no web_search)
     # ==============================================================================
     
-    # Generate conversation ID for Kiro API (random UUID, not used for tracking)
-    conversation_id = generate_conversation_id()
+    # Generate conversation ID for Kiro API.
+    # Claude Code Desktop provides metadata.user_id.session_id, which lets us
+    # keep a stable Kiro conversation ID across turns. Other clients keep the
+    # previous random UUID behavior.
+    conversation_id = (
+        derive_conversation_id_from_metadata(request_data.metadata)
+        or generate_conversation_id()
+    )
     
     # Build payload for Kiro
     # profileArn is required by runtime.kiro.dev for all auth types

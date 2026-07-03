@@ -27,7 +27,7 @@ and other common utilities.
 import hashlib
 import json
 import uuid
-from typing import TYPE_CHECKING, List, Dict, Any
+from typing import TYPE_CHECKING, List, Dict, Any, Optional
 
 from loguru import logger
 
@@ -161,6 +161,52 @@ def generate_conversation_id(messages: List[Dict[str, Any]] = None) -> str:
     
     # Return first 16 chars for readability (still 64 bits of entropy)
     return hash_digest[:16]
+
+
+def derive_conversation_id_from_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    """
+    Derive a stable Kiro conversation ID from client request metadata.
+
+    Claude Code Desktop sends ``metadata.user_id`` as a JSON string containing
+    a stable ``session_id`` for the current conversation. When present, this
+    value is used directly as Kiro's conversation ID to preserve the client's
+    native conversation identity.
+
+    Args:
+        metadata: Anthropic request metadata, if provided by the client.
+
+    Returns:
+        Raw session_id string when a non-empty session_id is available, otherwise
+        None so callers can keep the existing fallback behavior.
+    """
+    if not metadata:
+        return None
+
+    user_id = metadata.get("user_id")
+    if user_id is None:
+        return None
+
+    if isinstance(user_id, str):
+        try:
+            user_id_data = json.loads(user_id)
+        except json.JSONDecodeError:
+            logger.debug("metadata.user_id is not JSON; using fallback conversation ID")
+            return None
+    elif isinstance(user_id, dict):
+        user_id_data = user_id
+    else:
+        logger.debug("metadata.user_id has unsupported type; using fallback conversation ID")
+        return None
+
+    if not isinstance(user_id_data, dict):
+        logger.debug("metadata.user_id JSON is not an object; using fallback conversation ID")
+        return None
+
+    session_id = user_id_data.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        return None
+
+    return session_id.strip()
 
 
 def generate_tool_call_id() -> str:

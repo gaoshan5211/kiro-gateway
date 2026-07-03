@@ -816,6 +816,134 @@ class TestMessagesOptionalParams:
         assert response.status_code != 422
 
 
+class TestMessagesConversationId:
+    """Tests for deriving Kiro conversation IDs from Anthropic metadata."""
+
+    @staticmethod
+    def _mock_failed_kiro_client(mock_kiro_http_client_class):
+        """Create a mocked Kiro client that captures outgoing request payloads."""
+        mock_response = AsyncMock()
+        mock_response.status_code = 500
+        mock_response.aread = AsyncMock(return_value=b'{"message":"upstream failed"}')
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.request_with_retry = AsyncMock(return_value=mock_response)
+        mock_client_instance.close = AsyncMock()
+        mock_kiro_http_client_class.return_value = mock_client_instance
+        return mock_client_instance
+
+    @patch("kiro.routes_anthropic.KiroHttpClient")
+    def test_uses_raw_conversation_id_from_metadata_session_id(
+        self,
+        mock_kiro_http_client_class,
+        test_client,
+        valid_proxy_api_key,
+    ):
+        """
+        What it does: Verifies Claude Code session_id metadata becomes conversationId.
+        Purpose: Keep consecutive Kiro requests in the same client session.
+        """
+        print("Setup: Mocking Kiro client and Claude Code metadata...")
+        mock_client = self._mock_failed_kiro_client(mock_kiro_http_client_class)
+        session_id = "11111111-2222-3333-4444-555555555555"
+
+        print("Action: POST /v1/messages with metadata.user_id.session_id...")
+        response = test_client.post(
+            "/v1/messages",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": {
+                    "user_id": json.dumps({
+                        "device_id": "device-id",
+                        "account_uuid": "",
+                        "session_id": session_id,
+                    })
+                },
+            },
+        )
+
+        print("Checking: Kiro payload uses raw session_id as conversationId...")
+        assert response.status_code == 500
+        kiro_payload = mock_client.request_with_retry.call_args[0][2]
+        assert kiro_payload["conversationState"]["conversationId"] == session_id
+
+    @patch("kiro.routes_anthropic.generate_conversation_id", return_value="fallback-conversation-id")
+    @patch("kiro.routes_anthropic.KiroHttpClient")
+    def test_missing_metadata_uses_existing_conversation_id_fallback(
+        self,
+        mock_kiro_http_client_class,
+        mock_generate_conversation_id,
+        test_client,
+        valid_proxy_api_key,
+    ):
+        """
+        What it does: Verifies requests without metadata keep previous fallback behavior.
+        Purpose: Preserve compatibility for non-Claude-Code clients.
+        """
+        print("Setup: Mocking Kiro client and fallback generator...")
+        mock_client = self._mock_failed_kiro_client(mock_kiro_http_client_class)
+
+        print("Action: POST /v1/messages without metadata...")
+        response = test_client.post(
+            "/v1/messages",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Hello"}],
+            },
+        )
+
+        print("Checking: Kiro payload uses fallback conversationId...")
+        assert response.status_code == 500
+        mock_generate_conversation_id.assert_called_once_with()
+        kiro_payload = mock_client.request_with_retry.call_args[0][2]
+        assert (
+            kiro_payload["conversationState"]["conversationId"]
+            == "fallback-conversation-id"
+        )
+
+    @patch("kiro.routes_anthropic.generate_conversation_id", return_value="fallback-conversation-id")
+    @patch("kiro.routes_anthropic.KiroHttpClient")
+    def test_invalid_metadata_user_id_uses_existing_conversation_id_fallback(
+        self,
+        mock_kiro_http_client_class,
+        mock_generate_conversation_id,
+        test_client,
+        valid_proxy_api_key,
+    ):
+        """
+        What it does: Verifies malformed metadata.user_id falls back safely.
+        Purpose: Avoid breaking clients that use metadata.user_id differently.
+        """
+        print("Setup: Mocking Kiro client and malformed metadata.user_id...")
+        mock_client = self._mock_failed_kiro_client(mock_kiro_http_client_class)
+
+        print("Action: POST /v1/messages with non-JSON metadata.user_id...")
+        response = test_client.post(
+            "/v1/messages",
+            headers={"x-api-key": valid_proxy_api_key},
+            json={
+                "model": "claude-sonnet-5",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "Hello"}],
+                "metadata": {"user_id": "not-json"},
+            },
+        )
+
+        print("Checking: Kiro payload uses fallback conversationId...")
+        assert response.status_code == 500
+        mock_generate_conversation_id.assert_called_once_with()
+        kiro_payload = mock_client.request_with_retry.call_args[0][2]
+        assert (
+            kiro_payload["conversationState"]["conversationId"]
+            == "fallback-conversation-id"
+        )
+
+
 # =============================================================================
 # Tests for /v1/messages anthropic-version header
 # =============================================================================
