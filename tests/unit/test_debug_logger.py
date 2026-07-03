@@ -200,6 +200,59 @@ class TestDebugLoggerModeAll:
             content = file_path.read_bytes()
             assert content == b'chunk1chunk2'
 
+    def test_discard_buffers_writes_response_body_from_completed_raw_stream(self, tmp_path):
+        """
+        What it does: Verifies all mode writes an aggregated response_body.json.
+        Purpose: Ensure completed raw streams are converted into a readable body.
+        """
+        print("Setup: Mode all with a completed Kiro raw stream...")
+        debug_dir = tmp_path / "debug_logs"
+        raw_stream = (
+            b':message-type{"content":"Hel"}'
+            b':message-type{"content":"lo"}'
+            b':message-type{"name":"get_weather","toolUseId":"tool-1","input":{"city":"Paris"},"stop":true}'
+            b':content-type\x07\x00\x10application/json'
+            b':message-type\x07\x00\x05event{"unit":"credit","unitPlural":"credits","usage":0.23205672938640134}'
+            b':message-type{"contextUsagePercentage":12.5}'
+        )
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'all'):
+            from kiro.debug_logger import DebugLogger
+            logger = DebugLogger.__new__(DebugLogger)
+            logger._initialized = False
+            logger.__init__()
+            logger.debug_dir = debug_dir
+
+            print("Action: Logging raw chunks and finalizing the request...")
+            logger.prepare_new_request()
+            request_dir = logger._get_request_dir()
+            logger.log_raw_chunk(raw_stream[:80])
+            logger.log_raw_chunk(raw_stream[80:])
+            logger.discard_buffers()
+
+            print("Assert: response_body.json exists in latest and archived locations...")
+            latest_body = json.loads((debug_dir / "response_body.json").read_text())
+            archived_body = json.loads((request_dir / "response_body.json").read_text())
+            assert latest_body == archived_body
+            assert latest_body["content"] == "Hello"
+            assert latest_body["usage"] == 0.23205672938640134
+            assert latest_body["usage_events"] == [
+                {
+                    "unit": "credit",
+                    "unitPlural": "credits",
+                    "usage": 0.23205672938640134,
+                }
+            ]
+            assert latest_body["context_usage_percentage"] == 12.5
+            assert latest_body["event_counts"] == {
+                "content": 2,
+                "usage": 1,
+                "context_usage": 1,
+            }
+            assert latest_body["tool_calls"][0]["id"] == "tool-1"
+            assert latest_body["tool_calls"][0]["function"]["name"] == "get_weather"
+            assert json.loads(latest_body["tool_calls"][0]["function"]["arguments"]) == {"city": "Paris"}
+
 
 class TestDebugLoggerModeErrors:
     """Тесты для режима DEBUG_MODE=errors."""
@@ -264,6 +317,34 @@ class TestDebugLoggerModeErrors:
             error_info = json.loads((debug_dir / "error_info.json").read_text())
             assert error_info["status_code"] == 400
             assert error_info["error_message"] == "Bad Request"
+
+    def test_flush_on_error_writes_response_body_from_buffered_raw_stream(self, tmp_path):
+        """
+        What it does: Verifies errors mode writes response_body.json during flush.
+        Purpose: Ensure failed streaming requests still expose readable partial output.
+        """
+        print("Setup: Mode errors with buffered Kiro raw stream chunks...")
+        debug_dir = tmp_path / "debug_logs"
+
+        with patch('kiro.debug_logger.DEBUG_MODE', 'errors'):
+            from kiro.debug_logger import DebugLogger
+            logger = DebugLogger.__new__(DebugLogger)
+            logger._initialized = False
+            logger.__init__()
+            logger.debug_dir = debug_dir
+
+            print("Action: Buffering raw chunks and flushing on error...")
+            logger.log_raw_chunk(b':message-type{"content":"partial"}')
+            logger.flush_on_error(500, "Stream failed")
+
+            print("Assert: response_body.json contains the partial merged content...")
+            response_body = json.loads((debug_dir / "response_body.json").read_text())
+            assert response_body["content"] == "partial"
+            assert response_body["tool_calls"] == []
+            assert response_body["usage"] is None
+            assert response_body["usage_events"] == []
+            assert response_body["context_usage_percentage"] is None
+            assert response_body["event_counts"] == {"content": 1}
     
     def test_flush_on_error_clears_buffers(self, tmp_path):
         """

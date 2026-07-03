@@ -39,7 +39,7 @@ from itertools import count
 import json
 import shutil
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from loguru import logger
 
 from kiro.config import DEBUG_MODE, DEBUG_DIR
@@ -111,6 +111,7 @@ class DebugLogger:
         latest_files = (
             "request_body.json",
             "kiro_request_body.json",
+            "response_body.json",
             "response_stream_raw.txt",
             "response_stream_modified.txt",
             "error_info.json",
@@ -337,6 +338,7 @@ class DebugLogger:
         
         # In "all" mode data is already written, add error_info and app logs
         if self._is_immediate_write():
+            self._write_response_body_from_current_raw_stream()
             self.log_error_info(status_code, error_message)
             self._write_app_logs_to_file()
             self._clear_app_logs_buffer()
@@ -369,6 +371,7 @@ class DebugLogger:
                 file_path = self.debug_dir / "response_stream_raw.txt"
                 with open(file_path, "wb") as f:
                     f.write(self._raw_chunks_buffer)
+                self._write_response_body_to_file(self._raw_chunks_buffer)
             
             if self._modified_chunks_buffer:
                 file_path = self.debug_dir / "response_stream_modified.txt"
@@ -400,6 +403,7 @@ class DebugLogger:
             self._clear_buffers()
         elif DEBUG_MODE == "all":
             # In "all" mode save logs even for successful requests
+            self._write_response_body_from_current_raw_stream()
             self._write_app_logs_to_file()
             self._clear_app_logs_buffer()
             self._active_request_dir.set(None)
@@ -455,6 +459,98 @@ class DebugLogger:
                     f.write(chunk)
         except Exception:
             pass
+
+    def _write_response_body_from_current_raw_stream(self) -> None:
+        """
+        Builds response_body.json from the completed raw stream file.
+
+        DEBUG_MODE=all writes raw chunks directly to disk, so the completed raw
+        file is the source of truth for the aggregated body.
+        """
+        raw_file = self._get_request_dir() / "response_stream_raw.txt"
+        if not raw_file.exists():
+            return
+
+        try:
+            raw_stream = raw_file.read_bytes()
+        except OSError as e:
+            logger.warning(f"[DebugLogger] Failed to read raw stream for response_body.json: {e}")
+            return
+
+        self._write_response_body_to_file(raw_stream)
+
+    def _write_response_body_to_file(self, raw_stream: bytes) -> None:
+        """
+        Writes a readable aggregate of the provider raw stream.
+
+        Args:
+            raw_stream: Complete raw response stream bytes from Kiro.
+        """
+        response_body = self._build_response_body(raw_stream)
+        if response_body is None:
+            return
+
+        try:
+            for file_path in self._get_output_paths("response_body.json"):
+                file_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(response_body, f, indent=2, ensure_ascii=False)
+        except OSError as e:
+            logger.warning(f"[DebugLogger] Failed to write response_body.json: {e}")
+
+    def _build_response_body(self, raw_stream: bytes) -> Optional[dict[str, Any]]:
+        """
+        Parses a completed Kiro raw stream into a readable aggregate.
+
+        Args:
+            raw_stream: Complete raw response stream bytes from Kiro.
+
+        Returns:
+            Aggregated response body, or None when no Kiro stream events exist.
+        """
+        if not raw_stream:
+            return None
+
+        from kiro.parsers import AwsEventStreamParser, deduplicate_tool_calls, parse_bracket_tool_calls
+
+        parser = AwsEventStreamParser()
+        content_parts: list[str] = []
+        usage: Any = None
+        usage_events: list[Any] = []
+        context_usage_percentage: Any = None
+        event_counts: dict[str, int] = {}
+
+        for event in parser.feed(raw_stream):
+            event_type = event.get("type", "unknown")
+            event_counts[event_type] = event_counts.get(event_type, 0) + 1
+
+            if event_type == "content":
+                content = event.get("data")
+                if isinstance(content, str):
+                    content_parts.append(content)
+            elif event_type == "usage":
+                usage = event.get("data")
+                usage_events.append(event.get("raw", usage))
+            elif event_type == "context_usage":
+                context_usage_percentage = event.get("data")
+
+        content = "".join(content_parts)
+        tool_calls = parser.get_tool_calls()
+        bracket_tool_calls = parse_bracket_tool_calls(content)
+        if bracket_tool_calls:
+            tool_calls = deduplicate_tool_calls(tool_calls + bracket_tool_calls)
+
+        if not content and not tool_calls and usage is None and context_usage_percentage is None:
+            return None
+
+        return {
+            "content": content,
+            "tool_calls": tool_calls,
+            "usage": usage,
+            "usage_events": usage_events,
+            "context_usage_percentage": context_usage_percentage,
+            "event_counts": event_counts,
+        }
     
     def _write_app_logs_to_file(self):
         """Writes captured application logs to file."""

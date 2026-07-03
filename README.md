@@ -877,6 +877,7 @@ DEBUG_MODE=errors
 |------|------|
 | `request_body.json` | 来自客户端的传入请求（OpenAI 格式） |
 | `kiro_request_body.json` | 发送到 Kiro API 的请求 |
+| `response_body.json` | 从原始 Kiro 流合并出的可读响应内容 |
 | `response_stream_raw.txt` | 来自 Kiro 的原始流 |
 | `response_stream_modified.txt` | 转换后的流（OpenAI 格式） |
 | `app_logs.txt` | 请求的应用程序日志 |

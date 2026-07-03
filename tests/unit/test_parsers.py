@@ -479,6 +479,28 @@ class TestAwsEventStreamParserFeed:
         assert len(events) == 1
         assert events[0]["type"] == "usage"
         assert events[0]["data"] == 1.5
+        assert events[0]["raw"] == {"usage": 1.5}
+
+    def test_parses_metering_usage_event(self, aws_event_parser):
+        """
+        What it does: Tests parsing of Kiro metering usage event.
+        Goal: Ensure credit usage is extracted when usage is not the first key.
+        """
+        print("Setup: Chunk with Kiro metering usage...")
+        chunk = b'{"unit":"credit","unitPlural":"credits","usage":0.23205672938640134}'
+
+        print("Action: Parsing chunk...")
+        events = aws_event_parser.feed(chunk)
+
+        print(f"Result: {events}")
+        assert len(events) == 1
+        assert events[0]["type"] == "usage"
+        assert events[0]["data"] == 0.23205672938640134
+        assert events[0]["raw"] == {
+            "unit": "credit",
+            "unitPlural": "credits",
+            "usage": 0.23205672938640134,
+        }
     
     def test_parses_context_usage_event(self, aws_event_parser):
         """
