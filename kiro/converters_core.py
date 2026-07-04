@@ -49,6 +49,7 @@ from kiro.payload_guards import check_payload_size, trim_payload_to_limit
 
 
 SYSTEM_PROMPT_ACK = "I will follow these instructions."
+KIRO_CACHE_POINT: Dict[str, str] = {"type": "default"}
 
 
 # ==================================================================================================
@@ -99,12 +100,14 @@ class UnifiedMessage:
         tool_results: List of tool results (for user messages with tool responses)
         images: List of images in unified format (for multimodal user messages)
                 Format: [{"media_type": "image/jpeg", "data": "base64..."}]
+        cache_point: Whether to add a Kiro cachePoint marker to this message
     """
     role: str
     content: Any = ""
     tool_calls: Optional[List[Dict[str, Any]]] = None
     tool_results: Optional[List[Dict[str, Any]]] = None
     images: Optional[List[Dict[str, Any]]] = None
+    cache_point: bool = False
 
 
 @dataclass
@@ -116,10 +119,12 @@ class UnifiedTool:
         name: Tool name
         description: Tool description
         input_schema: JSON Schema for tool parameters
+        cache_point: Whether to insert a Kiro cachePoint marker after this tool
     """
     name: str
     description: Optional[str] = None
     input_schema: Optional[Dict[str, Any]] = None
+    cache_point: bool = False
 
 
 @dataclass
@@ -544,7 +549,8 @@ def process_tools_with_long_descriptions(
             processed_tool = UnifiedTool(
                 name=tool.name,
                 description=reference_description,
-                input_schema=tool.input_schema
+                input_schema=tool.input_schema,
+                cache_point=tool.cache_point,
             )
             processed_tools.append(processed_tool)
     
@@ -634,6 +640,8 @@ def convert_tools_to_kiro_format(tools: Optional[List[UnifiedTool]]) -> List[Dic
                 "inputSchema": {"json": sanitized_params}
             }
         })
+        if tool.cache_point:
+            kiro_tools.append({"cachePoint": dict(KIRO_CACHE_POINT)})
     
     return kiro_tools
 
@@ -1126,6 +1134,8 @@ def merge_adjacent_messages(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                     last.tool_results = []
                 last.tool_results = list(last.tool_results) + list(msg.tool_results)
                 total_tool_results_merged += len(msg.tool_results)
+
+            last.cache_point = last.cache_point or msg.cache_point
             
             # Count merges by role
             if msg.role in merge_counts:
@@ -1247,7 +1257,8 @@ def normalize_message_roles(messages: List[UnifiedMessage]) -> List[UnifiedMessa
                 content=msg.content,
                 tool_calls=msg.tool_calls,
                 tool_results=msg.tool_results,
-                images=msg.images
+                images=msg.images,
+                cache_point=msg.cache_point,
             )
             normalized.append(normalized_msg)
             converted_count += 1
@@ -1367,6 +1378,8 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 "modelId": model_id,
                 "origin": "AI_EDITOR",
             }
+            if msg.cache_point:
+                user_input["cachePoint"] = dict(KIRO_CACHE_POINT)
 
             # Process images - extract from message or content
             # IMPORTANT: images go directly into userInputMessage, NOT into userInputMessageContext
@@ -1391,6 +1404,8 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
                 content = "(empty placeholder)"
             
             assistant_response = {"content": content}
+            if msg.cache_point:
+                assistant_response["cachePoint"] = dict(KIRO_CACHE_POINT)
             
             # Process tool_calls
             tool_uses = extract_tool_uses_from_message(msg.content, msg.tool_calls)
@@ -1402,7 +1417,11 @@ def build_kiro_history(messages: List[UnifiedMessage], model_id: str) -> List[Di
     return history
 
 
-def build_kiro_system_history(system_prompt: str, model_id: str) -> List[Dict[str, Any]]:
+def build_kiro_system_history(
+    system_prompt: str,
+    model_id: str,
+    cache_point: bool = False,
+) -> List[Dict[str, Any]]:
     """
     Build native Kiro IDE-style system priming history entries.
 
@@ -1413,6 +1432,7 @@ def build_kiro_system_history(system_prompt: str, model_id: str) -> List[Dict[st
     Args:
         system_prompt: System prompt text to send to Kiro.
         model_id: Internal Kiro model ID.
+        cache_point: Whether to add a Kiro cachePoint marker to the system message.
 
     Returns:
         Two history entries when system_prompt is non-empty, otherwise an empty list.
@@ -1420,14 +1440,16 @@ def build_kiro_system_history(system_prompt: str, model_id: str) -> List[Dict[st
     if not system_prompt:
         return []
 
+    user_input_message = {
+        "content": system_prompt,
+        "modelId": model_id,
+        "origin": "AI_EDITOR",
+    }
+    if cache_point:
+        user_input_message["cachePoint"] = dict(KIRO_CACHE_POINT)
+
     return [
-        {
-            "userInputMessage": {
-                "content": system_prompt,
-                "modelId": model_id,
-                "origin": "AI_EDITOR",
-            }
-        },
+        {"userInputMessage": user_input_message},
         {
             "assistantResponseMessage": {
                 "content": SYSTEM_PROMPT_ACK,
@@ -1447,7 +1469,8 @@ def build_kiro_payload(
     tools: Optional[List[UnifiedTool]],
     conversation_id: str,
     profile_arn: str,
-    thinking_config: ThinkingConfig
+    thinking_config: ThinkingConfig,
+    system_cache_point: bool = False,
 ) -> KiroPayloadResult:
     """
     Builds complete payload for Kiro API from unified data.
@@ -1463,6 +1486,7 @@ def build_kiro_payload(
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
         thinking_config: Thinking configuration from API adapter
+        system_cache_point: Whether to add a cachePoint marker to the system prompt history
     
     Returns:
         KiroPayloadResult with payload and tool documentation
@@ -1523,22 +1547,23 @@ def build_kiro_payload(
     # Build history (all messages except the last one)
     history_messages = merged_messages[:-1] if len(merged_messages) > 1 else []
     
-    history = build_kiro_system_history(full_system_prompt, model_id)
+    history = build_kiro_system_history(full_system_prompt, model_id, system_cache_point)
     history.extend(build_kiro_history(history_messages, model_id))
     
     # Current message (the last one)
     current_message = merged_messages[-1]
     current_content = extract_text_content(current_message.content)
+    current_user_cache_point = current_message.cache_point
     
     # If current message is assistant, need to add it to history
     # and create user message placeholder
     if current_message.role == "assistant":
-        history.append({
-            "assistantResponseMessage": {
-                "content": current_content
-            }
-        })
+        assistant_response = {"content": current_content}
+        if current_message.cache_point:
+            assistant_response["cachePoint"] = dict(KIRO_CACHE_POINT)
+        history.append({"assistantResponseMessage": assistant_response})
         current_content = "(empty placeholder)"
+        current_user_cache_point = False
     
     # Process images in current message - extract from message or content
     # IMPORTANT: images go directly into userInputMessage, NOT into userInputMessageContext
@@ -1587,6 +1612,8 @@ def build_kiro_payload(
         "modelId": model_id,
         "origin": "AI_EDITOR",
     }
+    if current_user_cache_point:
+        user_input_message["cachePoint"] = dict(KIRO_CACHE_POINT)
     
     # Add images directly to userInputMessage (NOT to userInputMessageContext)
     if kiro_images:

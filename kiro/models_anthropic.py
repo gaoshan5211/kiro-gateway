@@ -45,6 +45,9 @@ class TextContentBlock(BaseModel):
 
     type: Literal["text"] = "text"
     text: str
+    cache_control: Optional[Dict[str, Any]] = None
+
+    model_config = {"extra": "allow"}
 
 
 class ThinkingContentBlock(BaseModel):

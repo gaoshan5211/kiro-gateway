@@ -1505,6 +1505,115 @@ class TestAnthropicToKiro:
         assert "You are a helpful assistant." not in current_content
         assert current_content == "Hello!"
 
+    def test_system_cache_control_adds_kiro_cache_point_to_system_history(self):
+        """
+        What it does: Converts Anthropic system cache_control to Kiro cachePoint.
+        Purpose: Preserve explicit prompt caching intent for stable system prompts.
+        """
+        print("Setup: Request with cached Anthropic system prompt...")
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            messages=[AnthropicMessage(role="user", content="Hello!")],
+            max_tokens=1024,
+            system=[
+                SystemContentBlock(
+                    text="You are a helpful assistant.",
+                    cache_control={"type": "ephemeral"},
+                )
+            ],
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-4.5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        history_user = result["conversationState"]["history"][0]["userInputMessage"]
+        current_user = result["conversationState"]["currentMessage"]["userInputMessage"]
+        print(f"System history message: {history_user}")
+        assert history_user["cachePoint"] == {"type": "default"}
+        assert "cachePoint" not in current_user
+
+    def test_current_message_cache_control_adds_kiro_cache_point_to_current_user(self):
+        """
+        What it does: Converts current Anthropic message cache_control to Kiro cachePoint.
+        Purpose: Preserve explicit prompt caching intent for the active user turn.
+        """
+        print("Setup: Request with cached current user content block...")
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            messages=[
+                AnthropicMessage(
+                    role="user",
+                    content=[
+                        {
+                            "type": "text",
+                            "text": "Cache this current prompt.",
+                            "cache_control": {"type": "ephemeral"},
+                        }
+                    ],
+                )
+            ],
+            max_tokens=1024,
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-4.5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        current_user = result["conversationState"]["currentMessage"]["userInputMessage"]
+        print(f"Current user message: {current_user}")
+        assert current_user["content"] == "Cache this current prompt."
+        assert current_user["cachePoint"] == {"type": "default"}
+
+    def test_tool_cache_control_inserts_kiro_tool_cache_point_marker(self):
+        """
+        What it does: Converts Anthropic tool cache_control to a Kiro tools marker.
+        Purpose: Preserve explicit prompt caching intent for stable tool definitions.
+        """
+        print("Setup: Request with one cached tool and one uncached tool...")
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-4-5",
+            messages=[AnthropicMessage(role="user", content="Use tools if needed.")],
+            max_tokens=1024,
+            tools=[
+                AnthropicTool(
+                    name="read_file",
+                    description="Read a file",
+                    input_schema={"type": "object"},
+                    cache_control={"type": "ephemeral"},
+                ),
+                AnthropicTool(
+                    name="write_file",
+                    description="Write a file",
+                    input_schema={"type": "object"},
+                ),
+            ],
+        )
+
+        print("Action: Converting to Kiro payload...")
+        with patch(
+            "kiro.converters_anthropic.get_model_id_for_kiro",
+            return_value="claude-sonnet-4.5",
+        ):
+            with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+                result = anthropic_to_kiro(request, "conv-123", "arn:aws:test")
+
+        tools = result["conversationState"]["currentMessage"]["userInputMessage"][
+            "userInputMessageContext"
+        ]["tools"]
+        print(f"Tools in payload: {tools}")
+        assert tools[0]["toolSpecification"]["name"] == "read_file"
+        assert tools[1] == {"cachePoint": {"type": "default"}}
+        assert tools[2]["toolSpecification"]["name"] == "write_file"
+
     def test_inline_system_role_is_merged_into_system_prompt(self):
         """
         What it does: Verifies inline role="system" messages are treated as system prompt.

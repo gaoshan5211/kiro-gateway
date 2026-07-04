@@ -44,6 +44,8 @@ from kiro.converters_core import (
     extract_images_from_content,
 )
 
+SUPPORTED_CACHE_CONTROL_TYPE = "ephemeral"
+
 
 def convert_anthropic_content_to_text(content: Any) -> str:
     """
@@ -84,7 +86,8 @@ def extract_system_prompt(system: Any) -> str:
     2. List of content blocks: [{"type": "text", "text": "...", "cache_control": {...}}]
 
     The second format is used for prompt caching with cache_control.
-    We extract only the text, ignoring cache_control (not supported by Kiro).
+    This function extracts only text; cache_control is mapped separately to
+    Kiro cachePoint markers during payload construction.
 
     Args:
         system: System prompt in string or list format
@@ -111,6 +114,50 @@ def extract_system_prompt(system: Any) -> str:
         return "\n".join(text_parts)
 
     return str(system)
+
+
+def get_cache_control(value: Any) -> Optional[Dict[str, Any]]:
+    """
+    Return a cache_control dictionary from dict or Pydantic-like objects.
+
+    Args:
+        value: Anthropic content block, tool, or other JSON-like object.
+
+    Returns:
+        cache_control dictionary when present, otherwise None.
+    """
+    if isinstance(value, dict):
+        cache_control = value.get("cache_control")
+    else:
+        cache_control = getattr(value, "cache_control", None)
+
+    return cache_control if isinstance(cache_control, dict) else None
+
+
+def has_supported_cache_control(value: Any) -> bool:
+    """
+    Check whether a value contains Anthropic ephemeral prompt-cache intent.
+
+    Kiro exposes cachePoint in its protocol, but the gateway only maps explicit
+    Anthropic cache_control requests. OpenAI has no equivalent standard field.
+
+    Args:
+        value: JSON-like request fragment or Pydantic model.
+
+    Returns:
+        True when a supported cache_control marker is present.
+    """
+    cache_control = get_cache_control(value)
+    if cache_control is not None:
+        return cache_control.get("type") == SUPPORTED_CACHE_CONTROL_TYPE
+
+    if isinstance(value, dict):
+        return any(has_supported_cache_control(child) for child in value.values())
+
+    if isinstance(value, list):
+        return any(has_supported_cache_control(child) for child in value)
+
+    return False
 
 
 def extract_tool_results_from_anthropic_content(content: Any) -> List[Dict[str, Any]]:
@@ -323,6 +370,7 @@ def convert_anthropic_messages(
             tool_calls=tool_calls if tool_calls else None,
             tool_results=tool_results if tool_results else None,
             images=images if images else None,
+            cache_point=has_supported_cache_control(content),
         )
         unified_messages.append(unified_msg)
 
@@ -338,7 +386,7 @@ def convert_anthropic_messages(
 
 def separate_inline_system_messages(
     messages: List[AnthropicMessage],
-) -> Tuple[List[str], List[AnthropicMessage]]:
+) -> Tuple[List[str], List[AnthropicMessage], bool]:
     """
     Separate inline system messages from conversation turns.
 
@@ -350,17 +398,20 @@ def separate_inline_system_messages(
         messages: Anthropic messages that may contain inline system entries.
 
     Returns:
-        A tuple of extracted system text fragments and remaining conversation
-        messages, preserving the original order within each group.
+        A tuple of extracted system text fragments, remaining conversation
+        messages, and whether any inline system entry requested caching.
     """
     inline_system_parts: List[str] = []
     conversation_messages: List[AnthropicMessage] = []
+    inline_system_cache_point = False
 
     for message in messages:
         if message.role == "system":
             system_text = convert_anthropic_content_to_text(message.content)
             if system_text:
                 inline_system_parts.append(system_text)
+            if has_supported_cache_control(message.content):
+                inline_system_cache_point = True
         else:
             conversation_messages.append(message)
 
@@ -369,7 +420,7 @@ def separate_inline_system_messages(
             f"Merged {len(inline_system_parts)} inline system message(s) into system prompt"
         )
 
-    return inline_system_parts, conversation_messages
+    return inline_system_parts, conversation_messages, inline_system_cache_point
 
 
 def convert_anthropic_tools(
@@ -400,7 +451,12 @@ def convert_anthropic_tools(
             input_schema = tool.input_schema
 
         unified_tools.append(
-            UnifiedTool(name=name, description=description, input_schema=input_schema)
+            UnifiedTool(
+                name=name,
+                description=description,
+                input_schema=input_schema,
+                cache_point=has_supported_cache_control(tool),
+            )
         )
 
     return unified_tools if unified_tools else None
@@ -487,8 +543,8 @@ def anthropic_to_kiro(
         ValueError: If there are no messages to send
     """
     # Keep inline system messages out of conversation history.
-    inline_system_parts, conversation_messages = separate_inline_system_messages(
-        request.messages
+    inline_system_parts, conversation_messages, inline_system_cache_point = (
+        separate_inline_system_messages(request.messages)
     )
 
     # Convert messages to unified format
@@ -500,6 +556,7 @@ def anthropic_to_kiro(
     # System prompt is already separate in Anthropic format!
     # It can be a string or list of content blocks (for prompt caching)
     system_prompt = extract_system_prompt(request.system)
+    system_cache_point = has_supported_cache_control(request.system) or inline_system_cache_point
     inline_system_text = "\n\n".join(part for part in inline_system_parts if part)
     if inline_system_text:
         system_prompt = (
@@ -531,6 +588,7 @@ def anthropic_to_kiro(
         conversation_id=conversation_id,
         profile_arn=profile_arn,
         thinking_config=thinking_config,
+        system_cache_point=system_cache_point,
     )
 
     return result.payload
