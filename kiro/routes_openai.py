@@ -129,8 +129,7 @@ async def get_models(request: Request):
     """
     Return list of available models.
     
-    Models are loaded at startup (blocking) and cached.
-    This endpoint returns the cached list.
+    Models are refreshed from Kiro's control-plane catalog before being returned.
     
     Args:
         request: FastAPI Request for accessing app.state
@@ -139,6 +138,7 @@ async def get_models(request: Request):
         ModelList with available models in consistent format (with dots)
     """
     logger.info("Request to /v1/models")
+    await request.app.state.account_manager.refresh_initialized_account_models()
     
     # Get available models based on mode
     if request.app.state.account_system:
@@ -352,11 +352,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
             url = f"{auth_manager.api_host}/generateAssistantResponse"
             logger.debug(f"Kiro API URL: {url} (account: {account.id})")
             
-            if request_data.stream:
-                http_client = KiroHttpClient(auth_manager, shared_client=None)
-            else:
-                shared_client = request.app.state.http_client
-                http_client = KiroHttpClient(auth_manager, shared_client=shared_client)
+            # Kiro runtime requests set Connection: close, so each request owns its client.
+            http_client = KiroHttpClient(auth_manager, shared_client=None)
             
             try:
                 # Make request to Kiro API
@@ -597,19 +594,11 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         logger.warning(f"Failed to log Kiro request: {e}")
     
     # Create HTTP client with retry logic
-    # For streaming: use per-request client to avoid CLOSE_WAIT leak on VPN disconnect (issue #54)
-    # For non-streaming: use shared client for connection pooling
+    # Kiro runtime requests set Connection: close, so each request owns its client.
     url = f"{auth_manager.api_host}/generateAssistantResponse"
     logger.debug(f"Kiro API URL: {url}")
     
-    if request_data.stream:
-        # Streaming mode: per-request client prevents orphaned connections
-        # when network interface changes (VPN disconnect/reconnect)
-        http_client = KiroHttpClient(auth_manager, shared_client=None)
-    else:
-        # Non-streaming mode: shared client for efficient connection reuse
-        shared_client = request.app.state.http_client
-        http_client = KiroHttpClient(auth_manager, shared_client=shared_client)
+    http_client = KiroHttpClient(auth_manager, shared_client=None)
     try:
         # Make request to Kiro API (for both streaming and non-streaming modes)
         # Important: we wait for Kiro response BEFORE returning StreamingResponse,

@@ -18,11 +18,12 @@ from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from datetime import datetime, timezone
 import json
 import time
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from kiro.routes_openai import verify_api_key, router
+from kiro.routes_openai import get_models, verify_api_key, router
 from kiro.config import PROXY_API_KEY, APP_VERSION
 
 
@@ -916,9 +917,8 @@ class TestHTTPClientSelection:
     """
     Tests for HTTP client selection in routes (issue #54).
     
-    Verifies that streaming requests use per-request clients to avoid CLOSE_WAIT leak
-    when network interface changes (VPN disconnect/reconnect), while non-streaming
-    requests use shared client for connection pooling.
+    Verifies that Kiro runtime requests use per-request clients to avoid stale
+    connection state when network interfaces change (VPN disconnect/reconnect).
     """
     
     @patch('kiro.routes_openai.KiroHttpClient')
@@ -965,17 +965,17 @@ class TestHTTPClientSelection:
         print("✅ Streaming correctly uses per-request client")
     
     @patch('kiro.routes_openai.KiroHttpClient')
-    def test_non_streaming_uses_shared_client(
+    def test_non_streaming_uses_per_request_client(
         self,
         mock_kiro_http_client_class,
         test_client,
         valid_proxy_api_key
     ):
         """
-        What it does: Verifies non-streaming requests use shared HTTP client.
-        Purpose: Ensure connection pooling for non-streaming requests.
+        What it does: Verifies non-streaming requests create per-request clients.
+        Purpose: Prevent a stale shared client from causing Kiro runtime 502 errors.
         """
-        print("\n--- Test: Non-streaming uses shared client ---")
+        print("\n--- Test: Non-streaming uses per-request client ---")
         
         # Setup mock
         mock_client_instance = AsyncMock()
@@ -999,13 +999,13 @@ class TestHTTPClientSelection:
         except Exception:
             pass
         
-        print("Checking: KiroHttpClient(shared_client=app.state.http_client)...")
+        print("Checking: KiroHttpClient(shared_client=None)...")
         assert mock_kiro_http_client_class.called
         call_args = mock_kiro_http_client_class.call_args
         print(f"Call args: {call_args}")
-        assert call_args[1]['shared_client'] is not None, \
-            "Non-streaming should use shared client"
-        print("✅ Non-streaming correctly uses shared client")
+        assert call_args[1]['shared_client'] is None, \
+            "Non-streaming Kiro runtime requests should use a per-request client"
+        print("✅ Non-streaming correctly uses a per-request client")
 
 
 # =============================================================================
@@ -1536,7 +1536,7 @@ class TestWebSearchAutoInjectionOpenAI:
 
 class TestModelsEndpointAccountSystem:
     """Tests for /v1/models endpoint with Account System."""
-    
+
     def test_get_models_account_system_logic(self):
         """
         What it does: Verifies logic for collecting models in account system mode.
@@ -1569,6 +1569,32 @@ class TestModelsEndpointAccountSystem:
         assert "claude-haiku-4.5" in available_model_ids
         assert len(available_model_ids) == 3
         print("✅ Account system mode correctly collects models from all accounts")
+
+    @pytest.mark.asyncio
+    async def test_get_models_refreshes_account_catalog_before_returning_models(self):
+        """
+        Test /v1/models refreshes the upstream catalog before building its response.
+
+        What it does: Invokes the account manager refresh hook for an account
+        system request.
+        Purpose: Surface Kiro model additions and removals without code edits.
+        """
+        account_manager = Mock()
+        account_manager.refresh_initialized_account_models = AsyncMock()
+        account_manager.get_all_available_models.return_value = ["gpt-5.6-sol"]
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    account_system=True,
+                    account_manager=account_manager,
+                )
+            )
+        )
+
+        result = await get_models(request)
+
+        account_manager.refresh_initialized_account_models.assert_awaited_once()
+        assert [model.id for model in result.data] == ["gpt-5.6-sol"]
     
     def test_get_models_legacy_logic(self):
         """

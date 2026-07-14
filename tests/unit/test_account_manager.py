@@ -13,6 +13,7 @@ Tests the AccountManager class that manages multiple Kiro accounts with:
 
 import asyncio
 import json
+import httpx
 import pytest
 import time
 from pathlib import Path
@@ -774,6 +775,128 @@ class TestAccountManagerInitializeAccount:
         assert manager._accounts[account_id].auth_manager is not None
         assert manager._accounts[account_id].model_cache is not None
         assert manager._accounts[account_id].model_resolver is not None
+
+    @pytest.mark.asyncio
+    async def test_initialize_runtime_account_fetches_control_plane_models_with_ide_profile(
+        self,
+        tmp_path,
+        monkeypatch,
+    ):
+        """
+        Test runtime accounts discover models through the Kiro control plane.
+
+        What it does: Uses the Kiro IDE profile cache when a refreshed
+        credential file does not contain profileArn.
+        Purpose: Ensure /v1/models follows upstream additions and removals.
+        """
+        credential_file = tmp_path / "credential.json"
+        credential_file.write_text(json.dumps({
+            "refreshToken": "test_refresh",
+            "accessToken": "test_access",
+            "expiresAt": "2099-01-01T00:00:00.000Z",
+            "region": "us-east-1",
+        }))
+        profile_file = tmp_path / "profile.json"
+        profile_arn = "arn:aws:codewhisperer:us-east-1:123456789012:profile/ABCDEFGHIJKL"
+        profile_file.write_text(json.dumps({"arn": profile_arn, "name": "KiroProfile"}))
+        credentials_file = tmp_path / "credentials.json"
+        credentials_file.write_text(json.dumps([
+            {"type": "json", "path": str(credential_file), "enabled": True}
+        ]))
+
+        manager = AccountManager(
+            credentials_file=str(credentials_file),
+            state_file=str(tmp_path / "state.json"),
+        )
+        await manager.load_credentials()
+        account_id = str(credential_file.resolve())
+        monkeypatch.setattr(
+            "kiro.account_manager.KIRO_IDE_PROFILE_PATHS",
+            (profile_file,),
+            raising=False,
+        )
+
+        response = Mock()
+        response.status_code = 200
+        response.json.return_value = {
+            "models": [
+                {"modelId": "gpt-5.6-sol", "modelName": "GPT 5.6 Sol"},
+                {"modelId": "claude-sonnet-5", "modelName": "Claude Sonnet 5"},
+            ]
+        }
+        mock_client = AsyncMock()
+        mock_client.request_with_retry = AsyncMock(return_value=response)
+        mock_client.close = AsyncMock()
+
+        with patch("kiro.account_manager.KiroHttpClient", return_value=mock_client):
+            success = await manager._initialize_account(account_id)
+
+        assert success is True
+        mock_client.request_with_retry.assert_awaited_once_with(
+            method="GET",
+            url="https://management.us-east-1.kiro.dev/List-Available-Models",
+            json_data=None,
+            params={
+                "origin": "AI_EDITOR",
+                "profileArn": profile_arn,
+                "maxResults": 50,
+            },
+            stream=False,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "x-amzn-codewhisperer-optout": "true",
+            },
+            use_default_headers=False,
+        )
+        assert manager._accounts[account_id].model_cache.is_valid_model("gpt-5.6-sol")
+        assert manager._accounts[account_id].model_cache.is_valid_model("claude-sonnet-5")
+
+    @pytest.mark.asyncio
+    async def test_fetch_models_from_kiro_collects_all_control_plane_pages(self):
+        """
+        Test control-plane model discovery follows Kiro pagination tokens.
+
+        What it does: Combines model results from two upstream pages.
+        Purpose: Prevent silently omitting models when Kiro paginates a catalog.
+        """
+        auth_manager = Mock()
+        auth_manager.profile_arn = "arn:aws:codewhisperer:us-east-1:123456789012:profile/ABCDEFGHIJKL"
+        auth_manager.q_host = "https://runtime.us-east-1.kiro.dev"
+        auth_manager.region = "us-east-1"
+
+        first_response = Mock()
+        first_response.status_code = 200
+        first_response.json.return_value = {
+            "models": [{"modelId": "gpt-5.6-sol"}],
+            "nextToken": "page-two",
+        }
+        second_response = Mock()
+        second_response.status_code = 200
+        second_response.json.return_value = {
+            "models": [{"modelId": "claude-sonnet-5"}],
+        }
+        mock_client = AsyncMock()
+        mock_client.request_with_retry = AsyncMock(
+            side_effect=[first_response, second_response]
+        )
+        mock_client.close = AsyncMock()
+
+        manager = AccountManager(credentials_file="unused.json", state_file="unused-state.json")
+        with patch("kiro.account_manager.KiroHttpClient", return_value=mock_client):
+            models = await manager._fetch_models_from_kiro(auth_manager)
+
+        assert [model["modelId"] for model in models] == [
+            "gpt-5.6-sol",
+            "claude-sonnet-5",
+        ]
+        assert mock_client.request_with_retry.await_count == 2
+        assert mock_client.request_with_retry.await_args_list[1].kwargs["params"] == {
+            "origin": "AI_EDITOR",
+            "profileArn": auth_manager.profile_arn,
+            "maxResults": 50,
+            "nextToken": "page-two",
+        }
     
     @pytest.mark.asyncio
     async def test_initialize_account_fetch_models_fallback(self, tmp_path):
@@ -809,7 +932,7 @@ class TestAccountManagerInitializeAccount:
         # Mock HTTP client to fail
         with patch('kiro.account_manager.KiroHttpClient') as mock_http_class:
             mock_client = AsyncMock()
-            mock_client.request_with_retry = AsyncMock(side_effect=Exception("Network error"))
+            mock_client.request_with_retry = AsyncMock(side_effect=httpx.ConnectError("Network error"))
             mock_client.close = AsyncMock()
             mock_http_class.return_value = mock_client
             

@@ -32,7 +32,7 @@ with connection pooling for better resource management.
 
 import asyncio
 import json
-from typing import Optional
+from typing import Dict, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -173,7 +173,9 @@ class KiroHttpClient:
         url: str,
         json_data: Optional[dict] = None,
         params: Optional[dict] = None,
-        stream: bool = False
+        stream: bool = False,
+        headers: Optional[Dict[str, str]] = None,
+        use_default_headers: bool = True,
     ) -> httpx.Response:
         """
         Executes an HTTP request with retry logic.
@@ -193,6 +195,10 @@ class KiroHttpClient:
             json_data: Optional JSON body (for POST/PUT/PATCH)
             params: Optional query parameters (for GET)
             stream: Use streaming (default False)
+            headers: Additional request headers. These override defaults when
+                use_default_headers is True.
+            use_default_headers: Whether to add GenerateAssistantResponse
+                headers. Set False for Kiro APIs with a different protocol.
         
         Returns:
             httpx.Response with successful response
@@ -213,10 +219,16 @@ class KiroHttpClient:
             try:
                 # Get current token
                 token = await self.auth_manager.get_access_token()
-                headers = get_kiro_headers(self.auth_manager, token)
+                request_headers = (
+                    get_kiro_headers(self.auth_manager, token)
+                    if use_default_headers
+                    else {"Authorization": f"Bearer {token}"}
+                )
+                if headers:
+                    request_headers.update(headers)
                 
                 # Build request kwargs based on parameters
-                request_kwargs = {"headers": headers}
+                request_kwargs = {"headers": request_headers}
                 
                 if json_data is not None:
                     request_kwargs["content"] = json.dumps(json_data).encode()
@@ -226,7 +238,7 @@ class KiroHttpClient:
                 
                 if stream:
                     # Prevent CLOSE_WAIT connection leak (issue #38)
-                    headers["Connection"] = "close"
+                    request_headers["Connection"] = "close"
                     req = client.build_request(method, url, **request_kwargs)
                     logger.debug("Sending request to Kiro API...")
                     response = await client.send(req, stream=True)
