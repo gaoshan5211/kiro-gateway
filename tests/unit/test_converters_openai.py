@@ -844,6 +844,26 @@ class TestBuildKiroPayload:
         model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
         print(f"Comparing model_id: Expected 'auto', Got '{model_id}'")
         assert model_id == "auto"
+
+    def test_resolves_catalog_derived_claude_alias_to_gpt_model(self):
+        """
+        What it does: Converts a Claude-compatible discovery alias to its GPT model ID.
+        Purpose: Ensure OpenAI requests send the original model ID to Kiro.
+        """
+        request = ChatCompletionRequest(
+            model="claude-opus-5.6",
+            messages=[ChatMessage(role="user", content="Hello")],
+        )
+
+        result = build_kiro_payload(
+            request,
+            "conv-123",
+            "",
+            model_aliases={"claude-opus-5.6": "gpt-5.6-sol"},
+        )
+
+        model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        assert model_id == "gpt-5.6-sol"
     
     def test_includes_tools_in_context(self):
         """

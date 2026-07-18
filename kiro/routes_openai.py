@@ -335,7 +335,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
                 kiro_payload = build_kiro_payload(
                     request_data,
                     conversation_id,
-                    profile_arn_for_payload
+                    profile_arn_for_payload,
+                    model_aliases=model_resolver.get_effective_aliases(),
                 )
             except ValueError as e:
                 raise HTTPException(status_code=400, detail=str(e))
@@ -580,7 +581,8 @@ async def chat_completions(request: Request, request_data: ChatCompletionRequest
         kiro_payload = build_kiro_payload(
             request_data,
             conversation_id,
-            profile_arn_for_payload
+            profile_arn_for_payload,
+            model_aliases=model_resolver.get_effective_aliases(),
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))

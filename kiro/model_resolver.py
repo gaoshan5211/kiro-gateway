@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional
 
 from loguru import logger
 
@@ -46,6 +46,65 @@ if TYPE_CHECKING:
 from kiro.config import FALLBACK_MODELS
 
 VALID_RUNTIME_MODEL_IDS: set = {model["modelId"] for model in FALLBACK_MODELS}
+
+
+GPT_SERIES_TO_CLAUDE_FAMILY: Dict[str, str] = {
+    "sol": "opus",
+    "terra": "sonnet",
+    "luna": "haiku",
+}
+"""Claude family exposed for each supported Kiro GPT model series."""
+
+GPT_MODEL_ID_PATTERN = re.compile(
+    r"^gpt-(?P<version>\d+(?:\.\d+)*)-(?P<series>sol|terra|luna)$",
+    flags=re.IGNORECASE,
+)
+
+
+def get_claude_alias_for_gpt_model(model_id: str) -> Optional[str]:
+    """
+    Build a Claude-compatible alias for a supported Kiro GPT model ID.
+
+    Args:
+        model_id: Original model ID returned by Kiro model discovery.
+
+    Returns:
+        Claude-compatible alias, or None when the model does not match a
+        supported GPT series.
+
+    Examples:
+        >>> get_claude_alias_for_gpt_model("gpt-5.6-sol")
+        'claude-opus-5.6'
+        >>> get_claude_alias_for_gpt_model("gpt-5.6-terra")
+        'claude-sonnet-5.6'
+        >>> get_claude_alias_for_gpt_model("gpt-5.6-luna")
+        'claude-haiku-5.6'
+    """
+    match = GPT_MODEL_ID_PATTERN.fullmatch(model_id)
+    if match is None:
+        return None
+
+    family = GPT_SERIES_TO_CLAUDE_FAMILY[match.group("series").lower()]
+    version = match.group("version")
+    return f"claude-{family}-{version}"
+
+
+def build_gpt_claude_aliases(model_ids: Iterable[str]) -> Dict[str, str]:
+    """
+    Build Claude-compatible aliases for supported GPT models in a catalog.
+
+    Args:
+        model_ids: Original model IDs currently available from Kiro.
+
+    Returns:
+        Mapping from Claude-compatible alias to original GPT model ID.
+    """
+    aliases: Dict[str, str] = {}
+    for model_id in model_ids:
+        alias = get_claude_alias_for_gpt_model(model_id)
+        if alias is not None:
+            aliases[alias] = model_id
+    return aliases
 
 
 def to_runtime_model_id(normalized: str) -> str:
@@ -323,8 +382,8 @@ class ModelResolver:
         Returns:
             ModelResolution with internal ID and metadata
         """
-        # Layer 0: Resolve alias (if exists)
-        resolved_model = self.aliases.get(external_model, external_model)
+        # Layer 0: Resolve explicit or catalog-derived alias (if it exists)
+        resolved_model = self.get_effective_aliases().get(external_model, external_model)
         if resolved_model != external_model:
             logger.debug(
                 f"Alias resolved: '{external_model}' → '{resolved_model}'"
@@ -377,6 +436,22 @@ class ModelResolver:
             normalized=normalized,
             is_verified=False
         )
+
+    def get_effective_aliases(self) -> Dict[str, str]:
+        """
+        Return configured aliases plus aliases derived from available GPT models.
+
+        Explicit aliases take precedence over generated aliases so operators can
+        override any automatically derived mapping.
+
+        Returns:
+            Mapping from every accepted alias to its original Kiro model ID.
+        """
+        generated_aliases = build_gpt_claude_aliases(
+            self.cache.get_all_model_ids()
+        )
+        generated_aliases.update(self.aliases)
+        return generated_aliases
     
     def get_available_models(self) -> List[str]:
         """
@@ -402,8 +477,8 @@ class ModelResolver:
         # Remove models that should be hidden from list
         models -= self.hidden_from_list
         
-        # Add alias keys (these are the names users will see and use)
-        models.update(self.aliases.keys())
+        # Add explicit and catalog-derived alias keys.
+        models.update(self.get_effective_aliases().keys())
         
         return sorted(models)
     

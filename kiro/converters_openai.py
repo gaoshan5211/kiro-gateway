@@ -393,7 +393,8 @@ def extract_thinking_config_from_openai(request: ChatCompletionRequest) -> Think
 def build_kiro_payload(
     request_data: ChatCompletionRequest,
     conversation_id: str,
-    profile_arn: str
+    profile_arn: str,
+    model_aliases: Optional[Dict[str, str]] = None,
 ) -> dict:
     """
     Builds complete payload for Kiro API from OpenAI request.
@@ -405,6 +406,8 @@ def build_kiro_payload(
         request_data: Request in OpenAI format
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
+        model_aliases: Optional request-scoped aliases derived from the selected
+            account's current Kiro model catalog.
     
     Returns:
         Payload dictionary for POST request to Kiro API
@@ -420,7 +423,8 @@ def build_kiro_payload(
     
     # Get model ID for Kiro API (aliases + normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
-    model_id = get_model_id_for_kiro(request_data.model, HIDDEN_MODELS, MODEL_ALIASES)
+    aliases = MODEL_ALIASES if model_aliases is None else model_aliases
+    model_id = get_model_id_for_kiro(request_data.model, HIDDEN_MODELS, aliases)
     
     # Extract thinking configuration from reasoning_effort
     thinking_config = extract_thinking_config_from_openai(request_data)

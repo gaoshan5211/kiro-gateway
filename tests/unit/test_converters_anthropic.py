@@ -1729,6 +1729,28 @@ class TestAnthropicToKiro:
         print(f"Comparing model_id: Expected 'auto', Got '{model_id}'")
         assert model_id == "auto"
 
+    def test_resolves_catalog_derived_claude_alias_to_gpt_model(self):
+        """
+        What it does: Converts a Claude-compatible discovery alias to its GPT model ID.
+        Purpose: Ensure Anthropic requests send the original model ID to Kiro.
+        """
+        request = AnthropicMessagesRequest(
+            model="claude-sonnet-5.6",
+            messages=[AnthropicMessage(role="user", content="Hello!")],
+            max_tokens=1024,
+        )
+
+        with patch("kiro.converters_core.FAKE_REASONING_ENABLED", False):
+            result = anthropic_to_kiro(
+                request,
+                "conv-123",
+                "arn:aws:test",
+                model_aliases={"claude-sonnet-5.6": "gpt-5.6-terra"},
+            )
+
+        model_id = result["conversationState"]["currentMessage"]["userInputMessage"]["modelId"]
+        assert model_id == "gpt-5.6-terra"
+
     def test_builds_history_for_multi_turn(self):
         """
         What it does: Verifies building of history for multi-turn conversation.

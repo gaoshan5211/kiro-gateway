@@ -15,6 +15,8 @@ import pytest
 from dataclasses import FrozenInstanceError
 
 from kiro.model_resolver import (
+    build_gpt_claude_aliases,
+    get_claude_alias_for_gpt_model,
     normalize_model_name,
     get_model_id_for_kiro,
     extract_model_family,
@@ -646,6 +648,123 @@ class TestGetModelIdForKiro:
 
         print(f"Comparing result: Expected 'claude-unknown-model' (pass-through), Got '{result}'")
         assert result == "claude-unknown-model"
+
+
+class TestGptClaudeAliases:
+    """Tests for Claude-compatible aliases derived from GPT model IDs."""
+
+    @pytest.mark.parametrize(
+        ("gpt_model_id", "expected_alias"),
+        [
+            ("gpt-5.6-sol", "claude-opus-5.6"),
+            ("gpt-5.6-terra", "claude-sonnet-5.6"),
+            ("gpt-5.6-luna", "claude-haiku-5.6"),
+        ],
+    )
+    def test_maps_supported_gpt_series_to_claude_families(
+        self,
+        gpt_model_id,
+        expected_alias,
+    ):
+        """
+        What it does: Converts each supported GPT series to its Claude family alias.
+        Purpose: Keep Claude Desktop model discovery compatible with every GPT tier.
+        """
+        assert get_claude_alias_for_gpt_model(gpt_model_id) == expected_alias
+
+    @pytest.mark.parametrize(
+        "model_id",
+        [
+            "gpt-5.6",
+            "gpt-5.6-mars",
+            "gpt-sol",
+            "claude-opus-5.6",
+            "",
+        ],
+    )
+    def test_does_not_alias_unknown_or_malformed_model_ids(self, model_id):
+        """
+        What it does: Rejects unsupported series and malformed model IDs.
+        Purpose: Avoid advertising aliases that cannot be routed deterministically.
+        """
+        assert get_claude_alias_for_gpt_model(model_id) is None
+
+    def test_builds_aliases_without_removing_original_models(self):
+        """
+        What it does: Builds aliases only for supported GPT models in a catalog.
+        Purpose: Preserve original IDs while exposing Claude-compatible alternatives.
+        """
+        aliases = build_gpt_claude_aliases(
+            [
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+                "gpt-5.6-mars",
+                "claude-sonnet-5",
+            ]
+        )
+
+        assert aliases == {
+            "claude-haiku-5.6": "gpt-5.6-luna",
+            "claude-opus-5.6": "gpt-5.6-sol",
+            "claude-sonnet-5.6": "gpt-5.6-terra",
+        }
+
+    def test_converter_helper_routes_claude_alias_to_original_gpt_model(self):
+        """
+        What it does: Resolves an advertised Claude alias before building a Kiro request.
+        Purpose: Ensure discovery aliases are usable for inference, not display-only.
+        """
+        aliases = build_gpt_claude_aliases(["gpt-5.6-sol"])
+
+        assert (
+            get_model_id_for_kiro("claude-opus-5.6", {}, aliases)
+            == "gpt-5.6-sol"
+        )
+
+    def test_explicit_alias_takes_precedence_over_generated_alias(self):
+        """
+        What it does: Keeps an explicitly configured alias target on collisions.
+        Purpose: Preserve user control over automatically derived aliases.
+        """
+        cache = ModelInfoCache()
+        cache._cache = {
+            "gpt-5.6-sol": {"modelId": "gpt-5.6-sol"},
+        }
+        resolver = ModelResolver(
+            cache=cache,
+            aliases={"claude-opus-5.6": "custom-opus"},
+        )
+
+        assert resolver.get_effective_aliases()["claude-opus-5.6"] == "custom-opus"
+
+    def test_model_resolver_lists_originals_and_aliases_and_resolves_aliases(self):
+        """
+        What it does: Exposes both GPT IDs and Claude aliases from a dynamic model cache.
+        Purpose: Verify the complete discovery and request-routing contract.
+        """
+        cache = ModelInfoCache()
+        cache._cache = {
+            model_id: {"modelId": model_id}
+            for model_id in (
+                "gpt-5.6-sol",
+                "gpt-5.6-terra",
+                "gpt-5.6-luna",
+            )
+        }
+        resolver = ModelResolver(cache=cache)
+
+        assert resolver.get_available_models() == [
+            "claude-haiku-5.6",
+            "claude-opus-5.6",
+            "claude-sonnet-5.6",
+            "gpt-5.6-luna",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+        ]
+        assert resolver.resolve("claude-opus-5.6").internal_id == "gpt-5.6-sol"
+        assert resolver.resolve("claude-sonnet-5.6").internal_id == "gpt-5.6-terra"
+        assert resolver.resolve("claude-haiku-5.6").internal_id == "gpt-5.6-luna"
 
 
 # =============================================================================

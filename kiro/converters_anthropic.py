@@ -519,7 +519,10 @@ def extract_thinking_config_from_anthropic(request: AnthropicMessagesRequest) ->
 
 
 def anthropic_to_kiro(
-    request: AnthropicMessagesRequest, conversation_id: str, profile_arn: str
+    request: AnthropicMessagesRequest,
+    conversation_id: str,
+    profile_arn: str,
+    model_aliases: Optional[Dict[str, str]] = None,
 ) -> dict:
     """
     Converts Anthropic Messages API request to Kiro API payload.
@@ -535,6 +538,8 @@ def anthropic_to_kiro(
         request: Anthropic MessagesRequest
         conversation_id: Unique conversation ID
         profile_arn: AWS CodeWhisperer profile ARN
+        model_aliases: Optional request-scoped aliases derived from the selected
+            account's current Kiro model catalog.
 
     Returns:
         Payload dictionary for POST request to Kiro API
@@ -567,7 +572,8 @@ def anthropic_to_kiro(
 
     # Get model ID for Kiro API (aliases + normalizes + resolves hidden models)
     # Pass-through principle: we normalize and send to Kiro, Kiro decides if valid
-    model_id = get_model_id_for_kiro(request.model, HIDDEN_MODELS, MODEL_ALIASES)
+    aliases = MODEL_ALIASES if model_aliases is None else model_aliases
+    model_id = get_model_id_for_kiro(request.model, HIDDEN_MODELS, aliases)
 
     # Extract thinking configuration from thinking parameter
     thinking_config = extract_thinking_config_from_anthropic(request)

@@ -851,6 +851,12 @@ class TestAccountManagerInitializeAccount:
         )
         assert manager._accounts[account_id].model_cache.is_valid_model("gpt-5.6-sol")
         assert manager._accounts[account_id].model_cache.is_valid_model("claude-sonnet-5")
+        assert manager.get_all_available_models() == [
+            "auto-kiro",
+            "claude-opus-5.6",
+            "claude-sonnet-5",
+            "gpt-5.6-sol",
+        ]
 
     @pytest.mark.asyncio
     async def test_fetch_models_from_kiro_collects_all_control_plane_pages(self):
