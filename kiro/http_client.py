@@ -42,6 +42,10 @@ from kiro.config import MAX_RETRIES, BASE_RETRY_DELAY, FIRST_TOKEN_MAX_RETRIES, 
 from kiro.auth import KiroAuthManager
 from kiro.utils import get_kiro_headers
 from kiro.network_errors import classify_network_error, get_short_error_message, NetworkErrorInfo
+from kiro.performance_metrics import (
+    attach_upstream_metrics,
+    create_upstream_metrics,
+)
 
 
 class KiroHttpClient:
@@ -216,6 +220,7 @@ class KiroHttpClient:
         last_response: Optional[httpx.Response] = None  # Для сохранения последнего 429/5xx
         
         for attempt in range(max_retries):
+            attempt_metrics = None
             try:
                 # Get current token
                 token = await self.auth_manager.get_access_token()
@@ -230,8 +235,10 @@ class KiroHttpClient:
                 # Build request kwargs based on parameters
                 request_kwargs = {"headers": request_headers}
                 
+                serialized_payload = b""
                 if json_data is not None:
-                    request_kwargs["content"] = json.dumps(json_data).encode()
+                    serialized_payload = json.dumps(json_data).encode()
+                    request_kwargs["content"] = serialized_payload
                 
                 if params is not None:
                     request_kwargs["params"] = params
@@ -241,14 +248,39 @@ class KiroHttpClient:
                     request_headers["Connection"] = "close"
                     req = client.build_request(method, url, **request_kwargs)
                     logger.debug("Sending request to Kiro API...")
+                    attempt_metrics = create_upstream_metrics(
+                        method=method,
+                        url=url,
+                        payload=json_data,
+                        stream=stream,
+                        attempt=attempt + 1,
+                        max_attempts=max_retries,
+                        payload_bytes=len(serialized_payload),
+                    )
                     response = await client.send(req, stream=True)
                 else:
                     logger.debug("Sending request to Kiro API...")
+                    attempt_metrics = create_upstream_metrics(
+                        method=method,
+                        url=url,
+                        payload=json_data,
+                        stream=stream,
+                        attempt=attempt + 1,
+                        max_attempts=max_retries,
+                        payload_bytes=len(serialized_payload),
+                    )
                     response = await client.request(method, url, **request_kwargs)
+
+                if attempt_metrics is not None:
+                    attempt_metrics.record_headers(response.status_code)
+                    attach_upstream_metrics(response, attempt_metrics)
                 
                 # Check status
                 if response.status_code == 200:
                     return response
+
+                if attempt_metrics is not None:
+                    attempt_metrics.complete(outcome=f"http_{response.status_code}")
                 
                 # 403 - token expired, refresh and retry
                 if response.status_code == 403:
@@ -276,6 +308,11 @@ class KiroHttpClient:
                 return response
                 
             except httpx.TimeoutException as e:
+                if attempt_metrics is not None:
+                    attempt_metrics.complete(
+                        outcome="network_timeout",
+                        error_type=type(e).__name__,
+                    )
                 last_error = e
                 
                 # Classify timeout error for user-friendly messaging
@@ -295,6 +332,11 @@ class KiroHttpClient:
                         break  # Don't retry non-retryable errors
                 
             except httpx.RequestError as e:
+                if attempt_metrics is not None:
+                    attempt_metrics.complete(
+                        outcome="network_error",
+                        error_type=type(e).__name__,
+                    )
                 last_error = e
                 
                 # Classify the error for user-friendly messaging

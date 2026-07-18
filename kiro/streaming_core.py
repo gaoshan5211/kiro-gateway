@@ -45,6 +45,7 @@ from kiro.config import (
     FAKE_REASONING_HANDLING,
 )
 from kiro.thinking_parser import ThinkingParser
+from kiro.performance_metrics import get_upstream_metrics
 
 if TYPE_CHECKING:
     from kiro.cache import ModelInfoCache
@@ -139,6 +140,9 @@ async def parse_kiro_stream(
     """
     parser = AwsEventStreamParser()
     first_token_received = False
+    performance_metrics = get_upstream_metrics(response)
+    performance_outcome = "incomplete"
+    performance_error_type: Optional[str] = None
     
     # Initialize thinking parser if fake reasoning is enabled
     thinking_parser: Optional[ThinkingParser] = None
@@ -157,11 +161,15 @@ async def parse_kiro_stream(
                 byte_iterator.__anext__(),
                 timeout=first_token_timeout
             )
+            if performance_metrics is not None:
+                performance_metrics.record_first_byte()
             logger.debug("First token received")
         except asyncio.TimeoutError:
+            performance_outcome = "first_byte_timeout"
             logger.warning(f"[FirstTokenTimeout] Model did not respond within {first_token_timeout}s")
             raise FirstTokenTimeoutError(f"No response within {first_token_timeout} seconds")
         except StopAsyncIteration:
+            performance_outcome = "empty_response"
             # Empty response - this is normal, just finish
             logger.debug("Empty response from Kiro API")
             return
@@ -171,6 +179,8 @@ async def parse_kiro_stream(
             debug_logger.log_raw_chunk(first_byte_chunk)
         
         async for event in _process_chunk(parser, first_byte_chunk, thinking_parser):
+            if performance_metrics is not None and event.type == "usage":
+                performance_metrics.record_usage(event.usage)
             if event.type == "content" or event.type == "thinking":
                 first_token_received = True
             yield event
@@ -181,6 +191,8 @@ async def parse_kiro_stream(
                 debug_logger.log_raw_chunk(chunk)
             
             async for event in _process_chunk(parser, chunk, thinking_parser):
+                if performance_metrics is not None and event.type == "usage":
+                    performance_metrics.record_usage(event.usage)
                 yield event
         
         # Finalize thinking parser and yield any remaining content
@@ -214,17 +226,32 @@ async def parse_kiro_stream(
         # Yield tool calls if any
         for tc in all_tool_calls:
             yield KiroEvent(type="tool_use", tool_use=tc)
-            
+
+        performance_outcome = "success"
     except FirstTokenTimeoutError:
         raise
+    except asyncio.CancelledError:
+        performance_outcome = "client_disconnected"
+        performance_error_type = "CancelledError"
+        raise
     except GeneratorExit:
+        performance_outcome = "client_disconnected"
+        performance_error_type = "GeneratorExit"
         logger.debug("Client disconnected (GeneratorExit)")
         raise
     except Exception as e:
+        performance_outcome = "stream_error"
+        performance_error_type = type(e).__name__
         error_type = type(e).__name__
         error_msg = str(e) if str(e) else "(empty message)"
         logger.error(f"Error during stream parsing: [{error_type}] {error_msg}", exc_info=True)
         raise
+    finally:
+        if performance_metrics is not None:
+            performance_metrics.complete(
+                outcome=performance_outcome,
+                error_type=performance_error_type,
+            )
 
 
 async def _process_chunk(
@@ -360,6 +387,47 @@ def calculate_tokens_from_context_usage(
     
     # Fallback: no context usage data
     return 0, completion_tokens, "unknown", "tiktoken"
+
+
+# ==================================================================================================
+# Streaming Response Prefetch
+# ==================================================================================================
+
+async def prefetch_stream(
+    stream: AsyncGenerator[str, None],
+) -> AsyncGenerator[str, None]:
+    """
+    Read the first SSE chunk before an HTTP 200 streaming response is committed.
+
+    This lets route handlers return an actual HTTP 504 when the upstream model
+    never sends a first byte. After the first chunk is available, the returned
+    generator replays it and then continues consuming the original stream.
+
+    Args:
+        stream: API-specific SSE generator.
+
+    Returns:
+        Generator that includes the prefetched first chunk.
+
+    Raises:
+        Exception: Any error raised before the first SSE chunk is preserved so
+            the route can still select a non-200 HTTP status.
+    """
+    try:
+        first_chunk = await stream.__anext__()
+    except StopAsyncIteration:
+        async def empty_stream() -> AsyncGenerator[str, None]:
+            if False:
+                yield ""
+
+        return empty_stream()
+
+    async def replay_stream() -> AsyncGenerator[str, None]:
+        yield first_chunk
+        async for chunk in stream:
+            yield chunk
+
+    return replay_stream()
 
 
 # ==================================================================================================

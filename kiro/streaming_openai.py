@@ -607,7 +607,7 @@ async def collect_stream_response(
     finish_reason = "stop"  # Default fallback
     completion_id = generate_completion_id()
     
-    async for chunk_str in stream_kiro_to_openai(
+    upstream_stream = stream_kiro_to_openai(
         client,
         response,
         model,
@@ -615,7 +615,18 @@ async def collect_stream_response(
         auth_manager,
         request_messages=request_messages,
         request_tools=request_tools
-    ):
+    )
+    while True:
+        try:
+            chunk_str = await upstream_stream.__anext__()
+        except StopAsyncIteration:
+            break
+        except FirstTokenTimeoutError as error:
+            raise HTTPException(
+                status_code=504,
+                detail=f"Upstream model did not send a first byte: {error}",
+            ) from error
+
         if not chunk_str.startswith("data:"):
             continue
         

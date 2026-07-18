@@ -26,8 +26,10 @@ from kiro.streaming_core import (
     collect_stream_to_result,
     calculate_tokens_from_context_usage,
     stream_with_first_token_retry,
+    prefetch_stream,
     _process_chunk,
 )
+from kiro.performance_metrics import UpstreamPerformanceMetrics, attach_upstream_metrics
 
 
 # ==================================================================================================
@@ -375,6 +377,56 @@ class TestParseKiroStream:
         assert len(usage_events) == 1
         assert usage_events[0].usage == {"credits": 0.001}
         print("✓ Usage events parsed correctly")
+
+    @pytest.mark.asyncio
+    async def test_records_first_byte_cache_usage_and_completion_metrics(
+        self,
+        mock_response,
+        mock_parser,
+    ):
+        """
+        What it does: Feeds stream lifecycle and cache usage into attached metrics.
+        Purpose: Cover OpenAI/Anthropic and streaming/non-streaming in shared code.
+        """
+        mock_parser.feed.return_value = [
+            {"type": "usage", "data": {"cacheReadInputTokens": 88}}
+        ]
+
+        async def mock_aiter_bytes():
+            yield b"chunk1"
+
+        mock_response.aiter_bytes = mock_aiter_bytes
+        mock_response.extensions = {}
+        metrics = UpstreamPerformanceMetrics(
+            method="POST",
+            endpoint="/generateAssistantResponse",
+            model="claude-sonnet-5",
+            stream=True,
+            attempt=1,
+            max_attempts=1,
+            payload_bytes=10,
+        )
+        attach_upstream_metrics(mock_response, metrics)
+
+        with (
+            patch("kiro.streaming_core.AwsEventStreamParser", return_value=mock_parser),
+            patch("kiro.streaming_core.FAKE_REASONING_ENABLED", False),
+            patch.object(metrics, "record_first_byte") as record_first_byte,
+            patch.object(metrics, "record_usage") as record_usage,
+            patch.object(metrics, "complete") as complete,
+        ):
+            events = [
+                event
+                async for event in parse_kiro_stream(
+                    mock_response,
+                    first_token_timeout=30,
+                )
+            ]
+
+        assert len(events) == 1
+        record_first_byte.assert_called_once_with()
+        record_usage.assert_called_once_with({"cacheReadInputTokens": 88})
+        complete.assert_called_once_with(outcome="success", error_type=None)
     
     @pytest.mark.asyncio
     async def test_parses_context_usage_events(self, mock_response, mock_parser):
@@ -465,6 +517,49 @@ class TestParseKiroStream:
         print(f"Caught exception: {exc_info.value}")
         assert "30" in str(exc_info.value)
         print("✓ FirstTokenTimeoutError raised on timeout")
+
+    @pytest.mark.asyncio
+    async def test_records_first_byte_timeout_completion_metrics(self, mock_response):
+        """
+        What it does: Marks exact first-byte timeout outcomes.
+        Purpose: Distinguish upstream silence from generic stream failures.
+        """
+        mock_response.extensions = {}
+        metrics = UpstreamPerformanceMetrics(
+            method="POST",
+            endpoint="/generateAssistantResponse",
+            model="claude-sonnet-5",
+            stream=True,
+            attempt=1,
+            max_attempts=1,
+            payload_bytes=10,
+        )
+        attach_upstream_metrics(mock_response, metrics)
+
+        async def mock_aiter_bytes():
+            yield b"unreachable"
+
+        mock_response.aiter_bytes = mock_aiter_bytes
+
+        async def close_awaitable_then_timeout(awaitable, *args, **kwargs):
+            awaitable.close()
+            raise asyncio.TimeoutError()
+
+        with (
+            patch(
+                "kiro.streaming_core.asyncio.wait_for",
+                side_effect=close_awaitable_then_timeout,
+            ),
+            patch.object(metrics, "complete") as complete,
+        ):
+            with pytest.raises(FirstTokenTimeoutError):
+                async for _ in parse_kiro_stream(mock_response, first_token_timeout=30):
+                    pass
+
+        complete.assert_called_once_with(
+            outcome="first_byte_timeout",
+            error_type=None,
+        )
     
     @pytest.mark.asyncio
     async def test_handles_empty_response(self, mock_response):
@@ -1241,6 +1336,56 @@ class TestStreamingCoreErrorHandling:
 # ==================================================================================================
 # Tests for stream_with_first_token_retry()
 # ==================================================================================================
+
+class TestPrefetchStream:
+    """Tests for priming SSE streams before committing downstream HTTP 200."""
+
+    @pytest.mark.asyncio
+    async def test_replays_prefetched_chunk_and_remaining_stream(self):
+        """
+        What it does: Reads one chunk eagerly and then preserves complete order.
+        Purpose: Enable pre-header timeout detection without dropping SSE data.
+        """
+        async def source():
+            yield "first"
+            yield "second"
+
+        primed = await prefetch_stream(source())
+        chunks = [chunk async for chunk in primed]
+
+        assert chunks == ["first", "second"]
+
+    @pytest.mark.asyncio
+    async def test_propagates_error_before_first_chunk(self):
+        """
+        What it does: Propagates a 504-capable exception during prefetch.
+        Purpose: Let FastAPI select an HTTP error before streaming begins.
+        """
+        expected = RuntimeError("first byte failed")
+
+        async def source():
+            raise expected
+            yield "unreachable"
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await prefetch_stream(source())
+
+        assert exc_info.value is expected
+
+    @pytest.mark.asyncio
+    async def test_empty_source_returns_empty_stream(self):
+        """
+        What it does: Handles an upstream stream that ends without SSE chunks.
+        Purpose: Avoid manufacturing content for valid empty responses.
+        """
+        async def source():
+            if False:
+                yield "unreachable"
+
+        primed = await prefetch_stream(source())
+
+        assert [chunk async for chunk in primed] == []
+
 
 class TestStreamWithFirstTokenRetryCore:
     """

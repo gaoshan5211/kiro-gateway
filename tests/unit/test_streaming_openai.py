@@ -1485,3 +1485,33 @@ class TestStreamingOpenaiTruncationDetection:
         # Should extract "length" from streaming chunks
         assert result["choices"][0]["finish_reason"] == "length"
         print("✓ collect_stream_response extracts finish_reason correctly")
+    @pytest.mark.asyncio
+    async def test_first_token_timeout_becomes_http_504(
+        self,
+        mock_http_client,
+        mock_response,
+        mock_model_cache,
+        mock_auth_manager,
+    ):
+        """
+        What it does: Converts non-streaming first-byte silence to HTTP 504.
+        Goal: Prevent OpenAI-compatible clients from retrying a generic 500.
+        """
+        from fastapi import HTTPException
+
+        async def timeout_stream(*args, **kwargs):
+            raise FirstTokenTimeoutError("No response within 30 seconds")
+            yield "unreachable"
+
+        with patch("kiro.streaming_openai.stream_kiro_to_openai", timeout_stream):
+            with pytest.raises(HTTPException) as exc_info:
+                await collect_stream_response(
+                    mock_http_client,
+                    mock_response,
+                    "claude-sonnet-4",
+                    mock_model_cache,
+                    mock_auth_manager,
+                )
+
+        assert exc_info.value.status_code == 504
+        assert "first byte" in str(exc_info.value.detail)

@@ -55,6 +55,7 @@ from kiro.utils import derive_conversation_id_from_metadata, generate_conversati
 from kiro.tokenizer import estimate_request_tokens
 from kiro.config import WEB_SEARCH_ENABLED
 from kiro.mcp_tools import handle_native_web_search
+from kiro.streaming_core import prefetch_stream
 
 # Import debug_logger
 try:
@@ -439,30 +440,31 @@ async def messages(
                 )
                 
                 if response.status_code == 200:
-                    # SUCCESS - report and return
-                    await account_manager.report_success(account.id, request_data.model)
-                    
                     if request_data.stream:
                         # Streaming mode
+                        async def make_retry_request():
+                            return await http_client.request_with_retry(
+                                "POST", url, kiro_payload, stream=True
+                            )
+
+                        upstream_stream = stream_with_first_token_retry_anthropic(
+                            make_request=make_retry_request,
+                            model=request_data.model,
+                            model_cache=model_cache,
+                            auth_manager=auth_manager,
+                            initial_response=response,
+                            request_messages=messages_for_tokenizer,
+                            request_tools=tools_for_tokenizer,
+                            request_system=system_for_tokenizer,
+                        )
+                        primed_stream = await prefetch_stream(upstream_stream)
+                        await account_manager.report_success(account.id, request_data.model)
+
                         async def stream_wrapper():
                             streaming_error = None
                             client_disconnected = False
                             try:
-                                async def make_retry_request():
-                                    return await http_client.request_with_retry(
-                                        "POST", url, kiro_payload, stream=True
-                                    )
-                                
-                                async for chunk in stream_with_first_token_retry_anthropic(
-                                    make_request=make_retry_request,
-                                    model=request_data.model,
-                                    model_cache=model_cache,
-                                    auth_manager=auth_manager,
-                                    initial_response=response,
-                                    request_messages=messages_for_tokenizer,
-                                    request_tools=tools_for_tokenizer,
-                                    request_system=system_for_tokenizer,
-                                ):
+                                async for chunk in primed_stream:
                                     yield chunk
                             except GeneratorExit:
                                 client_disconnected = True
@@ -477,9 +479,10 @@ async def messages(
                             finally:
                                 await http_client.close()
                                 if streaming_error:
+                                    error_status = getattr(streaming_error, "status_code", 500)
                                     error_type = type(streaming_error).__name__
                                     error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
-                                    logger.error(f"HTTP 500 - POST /v1/messages (streaming) - [{error_type}] {error_msg[:100]}")
+                                    logger.error(f"HTTP {error_status} - POST /v1/messages (streaming) - [{error_type}] {error_msg[:100]}")
                                 elif client_disconnected:
                                     logger.info(f"HTTP 200 - POST /v1/messages (streaming) - client disconnected")
                                 else:
@@ -487,7 +490,7 @@ async def messages(
                                 
                                 if debug_logger:
                                     if streaming_error:
-                                        debug_logger.flush_on_error(500, str(streaming_error))
+                                        debug_logger.flush_on_error(error_status, str(streaming_error))
                                     else:
                                         debug_logger.discard_buffers()
                         
@@ -511,6 +514,8 @@ async def messages(
                             request_tools=tools_for_tokenizer,
                             request_system=system_for_tokenizer,
                         )
+
+                        await account_manager.report_success(account.id, request_data.model)
                         
                         await http_client.close()
                         logger.info(f"HTTP 200 - POST /v1/messages (non-streaming) - completed")
@@ -799,27 +804,28 @@ async def messages(
         
         if request_data.stream:
             # Streaming mode with first token retry
+            async def make_retry_request():
+                return await http_client.request_with_retry(
+                    "POST", url, kiro_payload, stream=True
+                )
+
+            upstream_stream = stream_with_first_token_retry_anthropic(
+                make_request=make_retry_request,
+                model=request_data.model,
+                model_cache=model_cache,
+                auth_manager=auth_manager,
+                initial_response=response,
+                request_messages=messages_for_tokenizer,
+                request_tools=tools_for_tokenizer,
+                request_system=system_for_tokenizer,
+            )
+            primed_stream = await prefetch_stream(upstream_stream)
+
             async def stream_wrapper():
                 streaming_error = None
                 client_disconnected = False
                 try:
-                    # Create retry request function for retries
-                    async def make_retry_request():
-                        return await http_client.request_with_retry(
-                            "POST", url, kiro_payload, stream=True
-                        )
-                    
-                    # Use retry wrapper with initial response
-                    async for chunk in stream_with_first_token_retry_anthropic(
-                        make_request=make_retry_request,
-                        model=request_data.model,
-                        model_cache=model_cache,
-                        auth_manager=auth_manager,
-                        initial_response=response,
-                        request_messages=messages_for_tokenizer,
-                        request_tools=tools_for_tokenizer,
-                        request_system=system_for_tokenizer,
-                    ):
+                    async for chunk in primed_stream:
                         yield chunk
                 except GeneratorExit:
                     client_disconnected = True
@@ -835,9 +841,10 @@ async def messages(
                 finally:
                     await http_client.close()
                     if streaming_error:
+                        error_status = getattr(streaming_error, "status_code", 500)
                         error_type = type(streaming_error).__name__
                         error_msg = str(streaming_error) if str(streaming_error) else "(empty message)"
-                        logger.error(f"HTTP 500 - POST /v1/messages (streaming) - [{error_type}] {error_msg[:100]}")
+                        logger.error(f"HTTP {error_status} - POST /v1/messages (streaming) - [{error_type}] {error_msg[:100]}")
                     elif client_disconnected:
                         logger.info(f"HTTP 200 - POST /v1/messages (streaming) - client disconnected")
                     else:
@@ -845,7 +852,7 @@ async def messages(
                     
                     if debug_logger:
                         if streaming_error:
-                            debug_logger.flush_on_error(500, str(streaming_error))
+                            debug_logger.flush_on_error(error_status, str(streaming_error))
                         else:
                             debug_logger.discard_buffers()
             

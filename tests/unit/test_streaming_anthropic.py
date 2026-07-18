@@ -24,7 +24,7 @@ from kiro.streaming_anthropic import (
     collect_anthropic_response,
     stream_with_first_token_retry_anthropic,
 )
-from kiro.streaming_core import KiroEvent, StreamResult
+from kiro.streaming_core import FirstTokenTimeoutError, KiroEvent, StreamResult
 
 
 # ==================================================================================================
@@ -248,6 +248,32 @@ class TestStreamKiroToAnthropic:
         assert len(events) > 0
         assert "event: message_start" in events[0]
         print("✓ message_start event yielded first")
+
+    @pytest.mark.asyncio
+    async def test_timeout_happens_before_message_start_event(
+        self,
+        mock_response,
+        mock_model_cache,
+        mock_auth_manager,
+    ):
+        """
+        What it does: Raises an upstream first-byte timeout before yielding SSE.
+        Goal: Let the route return HTTP 504 instead of committing HTTP 200.
+        """
+        async def mock_parse_kiro_stream(*args, **kwargs):
+            raise FirstTokenTimeoutError("No upstream bytes")
+            yield
+
+        stream = stream_kiro_to_anthropic(
+            mock_response,
+            "claude-sonnet-4",
+            mock_model_cache,
+            mock_auth_manager,
+        )
+
+        with patch("kiro.streaming_anthropic.parse_kiro_stream", mock_parse_kiro_stream):
+            with pytest.raises(FirstTokenTimeoutError):
+                await stream.__anext__()
     
     @pytest.mark.asyncio
     async def test_yields_content_block_start_on_first_content(self, mock_response, mock_model_cache, mock_auth_manager):
@@ -1371,11 +1397,12 @@ class TestStreamWithFirstTokenRetryAnthropic:
         print("✓ Retry on timeout works correctly")
     
     @pytest.mark.asyncio
-    async def test_raises_anthropic_error_after_all_retries(self, mock_model_cache, mock_auth_manager):
+    async def test_raises_http_504_after_all_retries(self, mock_model_cache, mock_auth_manager):
         """
-        What it does: Raises Anthropic-formatted error after all retries exhausted.
-        Goal: Verify error format matches Anthropic API.
+        What it does: Raises HTTP 504 before downstream SSE headers are committed.
+        Goal: Prevent first-byte timeouts from being mislabeled as HTTP 500.
         """
+        from fastapi import HTTPException
         from kiro.streaming_core import FirstTokenTimeoutError
         
         print("Setup: Mock request that always times out...")
@@ -1393,7 +1420,7 @@ class TestStreamWithFirstTokenRetryAnthropic:
         print("Action: Streaming with all retries failing...")
         
         with patch('kiro.streaming_anthropic.stream_kiro_to_anthropic', mock_stream_kiro_to_anthropic):
-            with pytest.raises(Exception) as exc_info:
+            with pytest.raises(HTTPException) as exc_info:
                 async for chunk in stream_with_first_token_retry_anthropic(
                     make_request=mock_make_request,
                     model="claude-sonnet-4",
@@ -1405,13 +1432,11 @@ class TestStreamWithFirstTokenRetryAnthropic:
                     pass
         
         print(f"Exception: {exc_info.value}")
-        
-        # Error should be in Anthropic format (JSON)
-        error_json = json.loads(str(exc_info.value))
-        assert error_json["type"] == "error"
-        assert error_json["error"]["type"] == "timeout_error"
-        assert "30" in error_json["error"]["message"]
-        print("✓ Anthropic-formatted error raised after all retries")
+
+        assert exc_info.value.status_code == 504
+        assert "30" in str(exc_info.value.detail)
+        assert "2 attempts" in str(exc_info.value.detail)
+        print("✓ HTTP 504 raised after all retries")
     
     @pytest.mark.asyncio
     async def test_raises_anthropic_error_on_http_error(self, mock_model_cache, mock_auth_manager):
@@ -1667,3 +1692,31 @@ class TestStreamingAnthropicTruncationDetection:
         # Should detect truncation and set max_tokens
         assert result["stop_reason"] == "max_tokens"
         print("✓ collect_anthropic_response detects truncation correctly")
+    @pytest.mark.asyncio
+    async def test_first_token_timeout_becomes_http_504(
+        self,
+        mock_response,
+        mock_model_cache,
+        mock_auth_manager,
+    ):
+        """
+        What it does: Converts non-streaming first-byte silence to HTTP 504.
+        Goal: Prevent Anthropic-compatible clients from retrying a generic 500.
+        """
+        from fastapi import HTTPException
+        from kiro.streaming_core import FirstTokenTimeoutError
+
+        with patch(
+            "kiro.streaming_anthropic.collect_stream_to_result",
+            side_effect=FirstTokenTimeoutError("No response within 30 seconds"),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await collect_anthropic_response(
+                    mock_response,
+                    "claude-sonnet-4",
+                    mock_model_cache,
+                    mock_auth_manager,
+                )
+
+        assert exc_info.value.status_code == 504
+        assert "first byte" in str(exc_info.value.detail)

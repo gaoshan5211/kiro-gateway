@@ -17,6 +17,7 @@ from fastapi import HTTPException
 from kiro.http_client import KiroHttpClient
 from kiro.auth import KiroAuthManager
 from kiro.config import MAX_RETRIES, BASE_RETRY_DELAY, FIRST_TOKEN_MAX_RETRIES, STREAMING_READ_TIMEOUT
+from kiro.performance_metrics import get_upstream_metrics
 
 
 @pytest.fixture
@@ -469,6 +470,56 @@ class TestKiroHttpClientRequestWithRetry:
         mock_client.build_request.assert_called_once()
         mock_client.send.assert_called_once_with(mock_request, stream=True)
         assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_generation_request_attaches_content_free_performance_metrics(
+        self,
+        mock_auth_manager_for_http,
+    ):
+        """
+        What it does: Attaches payload/header metrics to a generation response.
+        Purpose: Make the shared stream parser observable for every API surface.
+        """
+        http_client = KiroHttpClient(mock_auth_manager_for_http)
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.extensions = {}
+        mock_request = Mock()
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.build_request = Mock(return_value=mock_request)
+        mock_client.send = AsyncMock(return_value=mock_response)
+        payload = {
+            "conversationState": {
+                "currentMessage": {
+                    "userInputMessage": {
+                        "modelId": "claude-sonnet-5",
+                        "content": "secret body that must not be logged",
+                    }
+                }
+            }
+        }
+
+        with (
+            patch.object(http_client, "_get_client", return_value=mock_client),
+            patch("kiro.http_client.get_kiro_headers", return_value={}),
+            patch("kiro.performance_metrics.logger.info") as mock_log,
+        ):
+            response = await http_client.request_with_retry(
+                "POST",
+                "https://runtime.example/generateAssistantResponse",
+                payload,
+                stream=True,
+            )
+
+        metrics = get_upstream_metrics(response)
+        assert metrics is not None
+        assert metrics.model == "claude-sonnet-5"
+        assert metrics.payload_bytes == len(json.dumps(payload).encode())
+        assert metrics.status_code == 200
+        assert "secret body" not in "\n".join(
+            call.args[0] for call in mock_log.call_args_list
+        )
 
 
 class TestKiroHttpClientContextManager:

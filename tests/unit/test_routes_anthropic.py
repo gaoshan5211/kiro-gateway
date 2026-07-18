@@ -14,12 +14,14 @@ import pytest
 from unittest.mock import AsyncMock, Mock, patch, MagicMock
 from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
-from kiro.routes_anthropic import verify_anthropic_api_key, router
+from kiro.routes_anthropic import messages, verify_anthropic_api_key, router
 from kiro.config import PROXY_API_KEY
+from kiro.models_anthropic import AnthropicMessagesRequest
 
 
 # =============================================================================
@@ -1244,6 +1246,99 @@ class TestAnthropicHTTPClientSelection:
         assert call_args[1]['shared_client'] is None, \
             "Non-streaming Kiro runtime requests should use a per-request client"
         print("✅ Anthropic non-streaming correctly uses a per-request client")
+
+
+class TestFirstByteTimeoutStatusAnthropic:
+    """Tests HTTP 504 propagation for both Anthropic response modes."""
+
+    @staticmethod
+    def _request_context():
+        """Build a minimal legacy-mode route context with one initialized account."""
+        auth_manager = MagicMock()
+        auth_manager.api_host = "https://runtime.example"
+        auth_manager.profile_arn = "arn:test"
+        account = SimpleNamespace(
+            auth_manager=auth_manager,
+            model_cache=MagicMock(),
+            model_resolver=MagicMock(),
+        )
+        account_manager = MagicMock()
+        account_manager.get_first_account.return_value = account
+        state = SimpleNamespace(
+            account_system=False,
+            account_manager=account_manager,
+        )
+        return SimpleNamespace(app=SimpleNamespace(state=state))
+
+    @pytest.mark.asyncio
+    async def test_streaming_timeout_is_http_504_before_streaming_response(self):
+        """
+        What it does: Fails during stream prefetch before HTTP 200 is returned.
+        Purpose: Ensure Anthropic streaming clients receive a real 504 status.
+        """
+        request_data = AnthropicMessagesRequest(
+            model="claude-sonnet-5",
+            max_tokens=16,
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=True,
+        )
+        upstream_response = MagicMock(status_code=200)
+        http_client = MagicMock()
+        http_client.request_with_retry = AsyncMock(return_value=upstream_response)
+        http_client.close = AsyncMock()
+        http_client.client = MagicMock()
+
+        async def timeout_stream(*args, **kwargs):
+            raise HTTPException(status_code=504, detail="first byte timeout")
+            yield "unreachable"
+
+        with (
+            patch("kiro.routes_anthropic.anthropic_to_kiro", return_value={}),
+            patch("kiro.routes_anthropic.KiroHttpClient", return_value=http_client),
+            patch(
+                "kiro.routes_anthropic.stream_with_first_token_retry_anthropic",
+                timeout_stream,
+            ),
+            patch("kiro.routes_anthropic.debug_logger", None),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await messages(self._request_context(), request_data)
+
+        assert exc_info.value.status_code == 504
+        http_client.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_timeout_is_http_504(self):
+        """
+        What it does: Propagates the non-streaming collector's timeout status.
+        Purpose: Ensure Anthropic non-streaming clients no longer receive HTTP 500.
+        """
+        request_data = AnthropicMessagesRequest(
+            model="claude-sonnet-5",
+            max_tokens=16,
+            messages=[{"role": "user", "content": "Hello"}],
+            stream=False,
+        )
+        upstream_response = MagicMock(status_code=200)
+        http_client = MagicMock()
+        http_client.request_with_retry = AsyncMock(return_value=upstream_response)
+        http_client.close = AsyncMock()
+        http_client.client = MagicMock()
+
+        with (
+            patch("kiro.routes_anthropic.anthropic_to_kiro", return_value={}),
+            patch("kiro.routes_anthropic.KiroHttpClient", return_value=http_client),
+            patch(
+                "kiro.routes_anthropic.collect_anthropic_response",
+                side_effect=HTTPException(status_code=504, detail="first byte timeout"),
+            ),
+            patch("kiro.routes_anthropic.debug_logger", None),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await messages(self._request_context(), request_data)
+
+        assert exc_info.value.status_code == 504
+        http_client.close.assert_awaited_once()
 
 
 # =============================================================================

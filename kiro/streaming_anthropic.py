@@ -37,6 +37,7 @@ import uuid
 from typing import TYPE_CHECKING, AsyncGenerator, Dict, List, Optional, Any
 
 import httpx
+from fastapi import HTTPException
 from loguru import logger
 
 from kiro.streaming_core import (
@@ -200,27 +201,34 @@ async def stream_kiro_to_anthropic(
     
     # Track truncated tool calls for recovery
     truncated_tools: List[Dict[str, Any]] = []
+
+    message_start_event = format_sse_event("message_start", {
+        "type": "message_start",
+        "message": {
+            "id": message_id,
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "model": model,
+            "stop_reason": None,
+            "stop_sequence": None,
+            "usage": {
+                "input_tokens": input_tokens,
+                "output_tokens": 0
+            }
+        }
+    })
+    message_start_sent = False
     
     try:
-        # Send message_start event
-        yield format_sse_event("message_start", {
-            "type": "message_start",
-            "message": {
-                "id": message_id,
-                "type": "message",
-                "role": "assistant",
-                "content": [],
-                "model": model,
-                "stop_reason": None,
-                "stop_sequence": None,
-                "usage": {
-                    "input_tokens": input_tokens,
-                    "output_tokens": 0
-                }
-            }
-        })
-        
         async for event in parse_kiro_stream(response, first_token_timeout):
+            # Do not commit downstream HTTP 200 until Kiro has produced its
+            # first raw response bytes. This also keeps first-byte retries from
+            # emitting duplicate Anthropic message_start events.
+            if not message_start_sent:
+                yield message_start_event
+                message_start_sent = True
+
             if event.type == "content":
                 content = event.content or ""
                 full_content += content
@@ -522,6 +530,12 @@ async def stream_kiro_to_anthropic(
                 context_usage_percentage = event.context_usage_percentage
             elif event.type == "usage" and event.usage:
                 upstream_cache_usage.update(_extract_cache_usage_fields(event.usage))
+
+        # Preserve a valid Anthropic envelope for a clean, immediately empty
+        # upstream stream. A timeout still propagates before this point.
+        if not message_start_sent:
+            yield message_start_event
+            message_start_sent = True
         
         # Track completion signals for truncation detection
         stream_completed_normally = context_usage_percentage is not None
@@ -758,7 +772,13 @@ async def collect_anthropic_response(
         input_tokens = request_token_stats["total_tokens"]
     
     # Collect stream result
-    result = await collect_stream_to_result(response)
+    try:
+        result = await collect_stream_to_result(response)
+    except FirstTokenTimeoutError as error:
+        raise HTTPException(
+            status_code=504,
+            detail=f"Upstream model did not send a first byte: {error}",
+        ) from error
     upstream_cache_usage = _extract_cache_usage_fields(result.usage)
     
     # Build content blocks
@@ -913,15 +933,15 @@ async def stream_with_first_token_retry_anthropic(
             }
         }))
     
-    def create_timeout_error(retries: int, timeout: float) -> Exception:
-        """Create exception for timeout errors in Anthropic format."""
-        return Exception(json.dumps({
-            "type": "error",
-            "error": {
-                "type": "timeout_error",
-                "message": f"Model did not respond within {timeout}s after {retries} attempts. Please try again."
-            }
-        }))
+    def create_timeout_error(retries: int, timeout: float) -> HTTPException:
+        """Create an HTTP 504 before downstream streaming headers are committed."""
+        return HTTPException(
+            status_code=504,
+            detail=(
+                f"Model did not respond within {timeout}s after {retries} attempts. "
+                "Please try again."
+            ),
+        )
     
     async def stream_processor(response: httpx.Response) -> AsyncGenerator[str, None]:
         """Process response and yield Anthropic SSE chunks."""
